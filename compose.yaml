@@ -1,0 +1,24 @@
+services:
+  dolibarr-mcp:
+    build:
+      context: .
+    image: dolibarr-mcp-server:0.1.0
+    environment:
+      DOLIBARR_BASE_URL: ${DOLIBARR_BASE_URL:?Set DOLIBARR_BASE_URL to your Dolibarr HTTPS URL}
+      HOST: 0.0.0.0
+      PORT: 8000
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-localhost:8000,127.0.0.1:8000}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
+    ports:
+      - "8000:8000"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,uid=10001,gid=10001
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    init: true
+    stop_grace_period: 30s
