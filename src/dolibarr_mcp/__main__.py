@@ -5,13 +5,7 @@ from __future__ import annotations
 import argparse
 from typing import TYPE_CHECKING
 
-import uvicorn
-from pydantic import ValidationError
-
 from dolibarr_mcp import __version__
-from dolibarr_mcp.app import create_app
-from dolibarr_mcp.config import Settings
-from dolibarr_mcp.logging import configure_logging
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -30,6 +24,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Validate CLI/configuration and run one Uvicorn process."""
     parser = build_parser()
     parser.parse_args(argv)
+
+    # Keep runtime imports below argument handling so an isolated wheel can expose
+    # help and version metadata without importing its uninstalled dependencies.
+    import uvicorn  # noqa: PLC0415
+    from pydantic import ValidationError  # noqa: PLC0415
+
+    from dolibarr_mcp.app import create_app  # noqa: PLC0415
+    from dolibarr_mcp.config import Settings  # noqa: PLC0415
+    from dolibarr_mcp.logging import configure_logging  # noqa: PLC0415
+
     try:
         settings = Settings()
     except ValidationError as exc:

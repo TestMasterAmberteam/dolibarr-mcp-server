@@ -135,4 +135,9 @@ class Settings(BaseSettings):
     @property
     def users_info_url(self) -> str:
         """Build the fixed identity endpoint while retaining a Dolibarr subdirectory."""
-        return f"{self.dolibarr_base_url}/api/index.php/users/info"
+        return f"{self.api_base_url}/users/info"
+
+    @property
+    def api_base_url(self) -> str:
+        """Build the fixed REST API root while retaining a Dolibarr subdirectory."""
+        return f"{self.dolibarr_base_url}/api/index.php"

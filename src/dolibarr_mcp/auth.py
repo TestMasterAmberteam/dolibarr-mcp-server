@@ -15,6 +15,7 @@ from starlette.authentication import (
 )
 from starlette.responses import JSONResponse, Response
 
+from dolibarr_mcp.credentials import store_request_api_key
 from dolibarr_mcp.errors import DolibarrError
 
 if TYPE_CHECKING:
@@ -81,6 +82,7 @@ class DolibarrAuthenticationBackend(AuthenticationBackend):
             identity = await self._client.get_current_user(token)
         except DolibarrError as exc:
             raise AuthenticationGatewayError(exc) from None
+        store_request_api_key(token)
         access_token = AccessToken(
             token="dolibarr-verified",  # noqa: S106 - deliberately not the presented credential
             client_id="dolibarr-user",

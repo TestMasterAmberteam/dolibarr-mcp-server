@@ -18,6 +18,7 @@ def make_settings(base_url: str, **overrides: object) -> Settings:
 def test_https_base_url_and_subdirectory_are_preserved() -> None:
     settings = make_settings("https://erp.example.org/dolibarr/")
     assert settings.dolibarr_base_url == "https://erp.example.org/dolibarr"
+    assert settings.api_base_url == "https://erp.example.org/dolibarr/api/index.php"
     assert settings.users_info_url == "https://erp.example.org/dolibarr/api/index.php/users/info"
 
 

@@ -65,7 +65,7 @@ def test_json_formatter_redacts_bearer_values() -> None:
 def test_domain_error_repr_is_safe_and_stable() -> None:
     error = DolibarrUnavailableError()
     assert repr(error) == "DolibarrUnavailableError()"
-    assert str(error) == "Authentication service is temporarily unavailable."
+    assert str(error) == "Dolibarr is temporarily unavailable."
 
 
 def test_logging_configuration_sets_json_handler_and_quiets_http_clients() -> None:

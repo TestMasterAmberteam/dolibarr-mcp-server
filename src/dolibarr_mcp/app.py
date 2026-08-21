@@ -20,6 +20,7 @@ from dolibarr_mcp.auth import (
 )
 from dolibarr_mcp.client import DolibarrClient
 from dolibarr_mcp.config import Settings
+from dolibarr_mcp.credentials import RequestCredentialContextMiddleware
 from dolibarr_mcp.logging import RequestContextMiddleware
 from dolibarr_mcp.server import create_mcp_server
 
@@ -87,7 +88,7 @@ def create_app(
 ) -> Starlette:
     """Compose one production ASGI application and its shared resources."""
     client = DolibarrClient(settings, transport=transport)
-    mcp_server = create_mcp_server()
+    mcp_server = create_mcp_server(client)
     transport_security = TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
         allowed_hosts=settings.allowed_hosts,
@@ -128,6 +129,7 @@ def create_app(
             allowed_hosts=settings.allowed_hosts,
             allowed_origins=settings.allowed_origins,
         ),
+        Middleware(RequestCredentialContextMiddleware),
         Middleware(
             AuthenticationMiddleware,
             backend=DolibarrAuthenticationBackend(client),

@@ -8,16 +8,48 @@ from pathlib import Path
 import httpx2
 import pytest
 
+import dolibarr_mcp.client as client_module
 from dolibarr_mcp.client import DolibarrClient, validated_retry_after
 from dolibarr_mcp.config import Settings
 from dolibarr_mcp.errors import (
+    DolibarrNotFoundError,
+    DolibarrPermissionDeniedError,
     DolibarrRateLimitedError,
+    DolibarrResultLimitError,
     DolibarrUnavailableError,
     InvalidDolibarrCredentialsError,
     InvalidDolibarrResponseError,
 )
 
 pytestmark = pytest.mark.anyio
+
+
+def task_payload(
+    task_id: int, *, lines: list[dict[str, object]] | None = None
+) -> dict[str, object]:
+    return {
+        "id": str(task_id),
+        "fk_project": "10",
+        "ref": f"T-{task_id}",
+        "label": f"Task {task_id}",
+        "lines": lines,
+    }
+
+
+def time_payload(entry_id: int = 1) -> dict[str, object]:
+    return {
+        "timespent_line_id": str(entry_id),
+        "timespent_line_date": 1_786_000_000,
+        "timespent_line_duration": "3600",
+        "timespent_line_fk_user": "7",
+        "fk_project": "10",
+        "project_ref": "P-10",
+        "project_label": "Project Ten",
+        "fk_task": "20",
+        "task_ref": "T-20",
+        "task_label": "Task Twenty",
+        "timespent_line_note": "work",
+    }
 
 
 async def test_key_is_added_only_to_the_individual_upstream_request(settings: Settings) -> None:
@@ -147,3 +179,132 @@ def test_custom_ca_builds_ssl_context(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.setattr("dolibarr_mcp.client.ssl.create_default_context", fake_context)
     DolibarrClient(ca_settings)
     assert seen == [str(ca_bundle)]
+
+
+async def test_reporting_gets_use_fixed_paths_and_individual_credentials(
+    settings: Settings,
+) -> None:
+    seen: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        path = request.url.path
+        if path.endswith("/projects/10"):
+            return httpx2.Response(200, json={"id": "10", "ref": "P-10", "title": "Project"})
+        if path.endswith("/projects/10/tasks"):
+            return httpx2.Response(200, json=[task_payload(20, lines=[time_payload()])])
+        if path.endswith("/tasks/20/timespent"):
+            return httpx2.Response(200, json=[time_payload()])
+        if path.endswith("/tasks/20"):
+            return httpx2.Response(200, json=task_payload(20))
+        if path.endswith("/tasks"):
+            return httpx2.Response(200, json=[task_payload(20)])
+        if path.endswith("/users"):
+            return httpx2.Response(
+                200,
+                json=[{"id": "7", "login": "alice", "firstname": "Alice"}],
+            )
+        raise AssertionError(path)
+
+    async with DolibarrClient(settings, transport=httpx2.MockTransport(handler)) as client:
+        project = await client.get_project("report-key", 10)
+        task = await client.get_task("report-key", 20)
+        lines = await client.get_task_timespent("report-key", 20)
+        project_tasks = await client.get_project_tasks("report-key", 10)
+        tasks = await client.list_tasks("report-key")
+        users = await client.list_users("report-key")
+    assert project.label == "Project"
+    assert task.task_id == 20
+    assert lines[0].duration_seconds == 3600
+    assert project_tasks[0].lines is not None
+    assert tasks[0].ref == "T-20"
+    assert users[0].login == "alice"
+    assert all(request.headers["DOLAPIKEY"] == "report-key" for request in seen)
+    assert all("Authorization" not in request.headers for request in seen)
+    users_request = next(request for request in seen if request.url.path.endswith("/users"))
+    assert users_request.url.params["properties"] == "id,login,firstname,lastname"
+
+
+async def test_task_listing_paginates_until_a_short_page(settings: Settings) -> None:
+    pages: list[int] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        page = int(request.url.params["page"])
+        pages.append(page)
+        count = 100 if page == 0 else 1
+        start = page * 100
+        return httpx2.Response(
+            200,
+            json=[task_payload(start + index + 1) for index in range(count)],
+        )
+
+    async with DolibarrClient(settings, transport=httpx2.MockTransport(handler)) as client:
+        tasks = await client.list_tasks("key")
+    assert len(tasks) == 101
+    assert pages == [0, 1]
+
+
+@pytest.mark.parametrize(
+    ("status_code", "error_type"),
+    [(403, DolibarrPermissionDeniedError), (404, DolibarrNotFoundError)],
+)
+async def test_reporting_resource_errors_are_typed(
+    settings: Settings,
+    status_code: int,
+    error_type: type[Exception],
+) -> None:
+    transport = httpx2.MockTransport(lambda _request: httpx2.Response(status_code))
+    async with DolibarrClient(settings, transport=transport) as client:
+        with pytest.raises(error_type):
+            await client.get_task("key", 20)
+
+
+async def test_reporting_bounds_are_enforced(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(client_module, "_MAX_TIME_LINES", 1)
+    monkeypatch.setattr(client_module, "_MAX_TASKS", 1)
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if request.url.path.endswith("/timespent"):
+            return httpx2.Response(200, json=[time_payload(1), time_payload(2)])
+        return httpx2.Response(200, json=[task_payload(1), task_payload(2)])
+
+    async with DolibarrClient(settings, transport=httpx2.MockTransport(handler)) as client:
+        with pytest.raises(DolibarrResultLimitError):
+            await client.get_task_timespent("key", 20)
+        with pytest.raises(DolibarrResultLimitError):
+            await client.get_project_tasks("key", 10)
+
+
+async def test_exact_task_page_bound_is_rejected(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(client_module, "_MAX_TASKS", 100)
+    transport = httpx2.MockTransport(
+        lambda _request: httpx2.Response(
+            200,
+            json=[task_payload(index + 1) for index in range(100)],
+        )
+    )
+    async with DolibarrClient(settings, transport=transport) as client:
+        with pytest.raises(DolibarrResultLimitError):
+            await client.list_tasks("key")
+
+
+async def test_exact_user_page_bound_is_rejected(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(client_module, "_MAX_USERS", 100)
+    transport = httpx2.MockTransport(
+        lambda _request: httpx2.Response(
+            200,
+            json=[{"id": index + 1, "login": f"user-{index}"} for index in range(100)],
+        )
+    )
+    async with DolibarrClient(settings, transport=transport) as client:
+        with pytest.raises(DolibarrResultLimitError):
+            await client.list_users("key")

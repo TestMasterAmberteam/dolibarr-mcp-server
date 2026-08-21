@@ -7,6 +7,7 @@ import logging
 from collections import Counter
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 import httpx2
 import pytest
@@ -23,6 +24,92 @@ IDENTITIES = {
     "fake-token-A": {"id": 1, "login": "alice", "firstname": "Alice", "lastname": "Able"},
     "fake-token-B": {"id": 2, "login": "bob", "firstname": "Bob", "lastname": "Baker"},
 }
+
+TOOL_NAMES = [
+    "dolibarr_whoami",
+    "dolibarr_my_time_report",
+    "dolibarr_project_time_report",
+    "dolibarr_task_timespent",
+    "dolibarr_time_summary",
+    "dolibarr_time_entries",
+]
+
+
+def report_line(
+    entry_id: int,
+    *,
+    task_id: int,
+    user_id: int,
+    day: int,
+    duration: int,
+) -> dict[str, object]:
+    timestamp = int(datetime(2026, 8, day, 12, tzinfo=UTC).timestamp())
+    return {
+        "timespent_line_id": str(entry_id),
+        "timespent_line_date": timestamp,
+        "timespent_line_datehour": timestamp,
+        "timespent_line_duration": str(duration),
+        "timespent_line_fk_user": str(user_id),
+        "timespent_line_note": f"entry {entry_id}",
+        "fk_project": "10",
+        "project_ref": "P-10",
+        "project_label": "Project Ten",
+        "fk_task": str(task_id),
+        "task_ref": f"T-{task_id}",
+        "task_label": f"Task {task_id}",
+    }
+
+
+def report_task(task_id: int, lines: list[dict[str, object]] | None) -> dict[str, object]:
+    return {
+        "id": str(task_id),
+        "fk_project": "10",
+        "ref": f"T-{task_id}",
+        "label": f"Task {task_id}",
+        "lines": lines,
+    }
+
+
+def reporting_transport(calls: list[tuple[str, str]]) -> httpx2.MockTransport:
+    task_lines = {
+        100: [report_line(1, task_id=100, user_id=1, day=1, duration=3600)],
+        101: [report_line(2, task_id=101, user_id=2, day=8, duration=1800)],
+    }
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        token = request.headers.get("DOLAPIKEY", "")
+        path = request.url.path
+        calls.append((path, token))
+        if path.endswith("/users/info"):
+            response = httpx2.Response(200, json=IDENTITIES[token])
+        elif path.endswith("/projects/10/tasks"):
+            response = httpx2.Response(
+                200,
+                json=[report_task(task_id, lines) for task_id, lines in task_lines.items()],
+            )
+        elif path.endswith("/projects/10"):
+            response = httpx2.Response(
+                200,
+                json={"id": "10", "ref": "P-10", "title": "Project Ten"},
+            )
+        elif path.endswith("/tasks/100/timespent"):
+            response = httpx2.Response(200, json=task_lines[100])
+        elif path.endswith("/tasks/101/timespent"):
+            response = httpx2.Response(200, json=task_lines[101])
+        elif path.endswith("/tasks/100"):
+            response = httpx2.Response(200, json=report_task(100, None))
+        elif path.endswith("/tasks"):
+            response = httpx2.Response(
+                200,
+                json=[report_task(task_id, None) for task_id in task_lines],
+            )
+        elif path.endswith("/users"):
+            response = httpx2.Response(200, json=list(IDENTITIES.values()))
+        else:
+            raise AssertionError(path)
+        return response
+
+    return httpx2.MockTransport(handler)
 
 
 def dolibarr_transport(
@@ -80,7 +167,7 @@ async def test_valid_token_initialize_list_and_call(settings: Settings) -> None:
         settings, dolibarr_transport(calls=calls), token="fake-token-A"
     ) as client:
         tools, identity = await run_mcp_flow(client)
-    assert tools == ["dolibarr_whoami"]
+    assert tools == TOOL_NAMES
     assert identity == {
         "user_id": 1,
         "login": "alice",
@@ -89,6 +176,71 @@ async def test_valid_token_initialize_list_and_call(settings: Settings) -> None:
     }
     # initialize, tools/list, tools/call, and session DELETE are each authenticated once.
     assert calls == ["fake-token-A"] * 4
+
+
+async def test_all_reporting_tools_cross_real_auth_and_mcp_stack(settings: Settings) -> None:
+    calls: list[tuple[str, str]] = []
+    async with asgi_client(
+        settings,
+        reporting_transport(calls),
+        token="fake-token-A",
+    ) as client:
+        transport = streamable_http_client("http://localhost/mcp", http_client=client)
+        async with Client(transport, mode="legacy") as mcp_client:
+            tools = await mcp_client.list_tools()
+            my_report = await mcp_client.call_tool(
+                "dolibarr_my_time_report",
+                {"date_from": "2026-08-01", "date_to": "2026-08-31"},
+            )
+            project_report = await mcp_client.call_tool(
+                "dolibarr_project_time_report",
+                {
+                    "project_id": 10,
+                    "date_from": "2026-08-01",
+                    "date_to": "2026-08-31",
+                },
+            )
+            task_report = await mcp_client.call_tool(
+                "dolibarr_task_timespent",
+                {
+                    "task_id": 100,
+                    "date_from": "2026-08-01",
+                    "date_to": "2026-08-31",
+                },
+            )
+            summary = await mcp_client.call_tool(
+                "dolibarr_time_summary",
+                {
+                    "date_from": "2026-08-01",
+                    "date_to": "2026-08-31",
+                    "group_by": "user",
+                    "project_id": 10,
+                },
+            )
+            entries = await mcp_client.call_tool(
+                "dolibarr_time_entries",
+                {
+                    "date_from": "2026-08-01",
+                    "date_to": "2026-08-31",
+                    "task_id": 100,
+                },
+            )
+    assert [tool.name for tool in tools.tools] == TOOL_NAMES
+    assert all(
+        tool.annotations is not None and tool.annotations.read_only_hint for tool in tools.tools
+    )
+    assert my_report.structured_content is not None
+    assert my_report.structured_content["duration_seconds"] == 3600
+    assert project_report.structured_content is not None
+    assert project_report.structured_content["duration_seconds"] == 5400
+    assert task_report.structured_content is not None
+    assert task_report.structured_content["entries"][0]["note"] == "entry 1"
+    assert summary.structured_content is not None
+    assert summary.structured_content["group_count"] == 2
+    assert entries.structured_content is not None
+    assert entries.structured_content["entry_count"] == 1
+    assert all(token == "fake-token-A" for _path, token in calls)
+    assert all("api_key" not in str(tool.input_schema).lower() for tool in tools.tools)
 
 
 @pytest.mark.parametrize(

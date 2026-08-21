@@ -21,7 +21,7 @@ uv run mypy --strict src tests
 uv run pytest
 uv run pre-commit run --all-files
 uv build
-uv run twine check dist/*
+uv run twine check dist/*.whl dist/*.tar.gz
 uv run pip-audit
 uv run codespell
 actionlint

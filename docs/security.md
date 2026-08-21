@@ -16,6 +16,9 @@ not OAuth. Clients must already possess the key and be able to set a custom Auth
 - Attach `DOLAPIKEY` only to the individual upstream request.
 - Keep default shared-client headers credential-free.
 - Use a redacted marker in the SDK access-token object.
+- After successful verification, retain the key only in the active ASGI request's private holder.
+- Clear that mutable holder in `finally`, invalidating references copied to child async contexts.
+- Attach the request key only to fixed-path reporting GETs made during the same `tools/call`.
 - Never log headers, bodies, query strings, identities, upstream payloads, or exceptions containing
   transport details.
 - Centrally redact credential-like mapping keys and recognizable Bearer/DOLAPIKEY strings.
@@ -45,6 +48,18 @@ An in-process limiter is intentionally absent because it would be inconsistent a
 and bounded pools. Mount a private CA read-only and set `DOLIBARR_CA_BUNDLE` if required. Do not
 disable TLS verification. Egress policy should restrict the service to the configured Dolibarr host
 and required infrastructure.
+
+## Reporting data boundary
+
+Reporting requires Dolibarr 23.0 or newer. Every read uses the requesting user's key, so Dolibarr
+remains responsible for project, task, user, and time-entry authorization. The server has no
+administrator credential and cannot broaden those permissions.
+
+Only fixed project, task, user-label, and time-entry GETs are implemented. Tool inputs cannot select
+an upstream URL or arbitrary Dolibarr filter expression. Upstream payloads are projected to typed
+allowlists. Aggregate tools omit notes; detailed tools return notes only when explicitly requested
+and truncate them to 4000 characters. Output rows, accessible tasks, and processed time lines have
+hard bounds to limit memory use and model-context amplification.
 
 ## Secret rotation and incident response
 

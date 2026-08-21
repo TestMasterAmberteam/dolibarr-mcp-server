@@ -66,7 +66,14 @@ async def test_uvicorn_initialize_list_call_and_clean_shutdown(settings: Setting
             async with Client(transport, mode="legacy") as mcp_client:
                 tools = await mcp_client.list_tools()
                 result = await mcp_client.call_tool("dolibarr_whoami", {})
-        assert [tool.name for tool in tools.tools] == ["dolibarr_whoami"]
+        assert [tool.name for tool in tools.tools] == [
+            "dolibarr_whoami",
+            "dolibarr_my_time_report",
+            "dolibarr_project_time_report",
+            "dolibarr_task_timespent",
+            "dolibarr_time_summary",
+            "dolibarr_time_entries",
+        ]
         assert result.structured_content == {
             "user_id": 88,
             "login": "network-user",

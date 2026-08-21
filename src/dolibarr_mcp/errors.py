@@ -29,15 +29,43 @@ class DolibarrRateLimitedError(DolibarrError):
     """Dolibarr rejected the request because of rate limiting."""
 
     status_code = 429
-    public_message = "Authentication service rate limit exceeded."
+    public_message = "Dolibarr rate limit exceeded."
 
 
 class DolibarrUnavailableError(DolibarrError):
     """Dolibarr is temporarily unreachable or unavailable."""
 
     status_code = 503
-    public_message = "Authentication service is temporarily unavailable."
+    public_message = "Dolibarr is temporarily unavailable."
 
 
 class InvalidDolibarrResponseError(DolibarrError):
     """Dolibarr returned an unexpected status or payload."""
+
+
+class DolibarrPermissionDeniedError(DolibarrError):
+    """The verified user cannot access the requested Dolibarr resource."""
+
+    status_code = 403
+    public_message = "Dolibarr denied access to the requested resource."
+
+
+class DolibarrNotFoundError(DolibarrError):
+    """The requested fixed-path Dolibarr resource does not exist."""
+
+    status_code = 404
+    public_message = "Requested Dolibarr resource was not found."
+
+
+class DolibarrResultLimitError(DolibarrError):
+    """A report exceeded a local bound before it could be returned safely."""
+
+    status_code = 422
+    public_message = "Dolibarr report exceeds the safe processing limit."
+
+
+class ReportRequestError(DolibarrError):
+    """A report request is internally inconsistent after schema validation."""
+
+    status_code = 422
+    public_message = "Invalid report parameters."
