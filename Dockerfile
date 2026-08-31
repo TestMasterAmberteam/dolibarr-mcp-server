@@ -19,7 +19,7 @@ FROM python:3.12.11-slim-bookworm AS runtime
 
 LABEL org.opencontainers.image.title="dolibarr-mcp-server" \
       org.opencontainers.image.description="Stateless per-user Dolibarr MCP server" \
-      org.opencontainers.image.version="0.1.0" \
+      org.opencontainers.image.version="0.2.0" \
       org.opencontainers.image.licenses="MIT"
 
 ENV PATH="/app/.venv/bin:${PATH}" \

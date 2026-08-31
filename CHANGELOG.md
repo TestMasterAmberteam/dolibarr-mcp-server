@@ -13,6 +13,11 @@ All notable changes to this project are documented here. The format follows
   `dolibarr_task_timespent`, `dolibarr_time_summary`, and `dolibarr_time_entries` tools.
 - Typed, bounded time-entry normalization, filtering, aggregation, and pagination for Dolibarr 23+.
 - Actively cleared request-scoped credential context for per-user reporting reads (ADR 0002).
+- Read-only third-party, project-lead, and active-user lookup tools.
+- Confirmed create and update tools for third parties and project-based leads.
+- Separate opportunity-stage, project validate/reopen, and `PROJECTLEADER` assignment operations.
+- Stateless preview tokens with stale-state checks, duplicate warnings, and explicit partial-write
+  results (ADR 0003).
 
 ### Fixed
 
@@ -21,6 +26,8 @@ All notable changes to this project are documented here. The format follows
 ### Security
 
 - Raised the development test runner to `pytest>=9.0.3` to exclude `PYSEC-2026-1845`.
+- Kept sales access API-only with fixed methods, paths, and payload allowlists; no database,
+  `sqlfilters`, credentials, headers, or arbitrary upstream paths are exposed to tools.
 
 ## [0.1.0] - 2026-08-19
 

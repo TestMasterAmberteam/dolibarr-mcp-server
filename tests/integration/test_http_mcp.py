@@ -32,7 +32,28 @@ TOOL_NAMES = [
     "dolibarr_task_timespent",
     "dolibarr_time_summary",
     "dolibarr_time_entries",
+    "dolibarr_thirdparty_search",
+    "dolibarr_thirdparty_get",
+    "dolibarr_thirdparty_create",
+    "dolibarr_thirdparty_update",
+    "dolibarr_user_search",
+    "dolibarr_lead_search",
+    "dolibarr_lead_get",
+    "dolibarr_lead_create",
+    "dolibarr_lead_update",
+    "dolibarr_lead_change_status",
+    "dolibarr_lead_assign",
+    "dolibarr_lead_open_project",
 ]
+
+READ_ONLY_TOOL_NAMES = {
+    *TOOL_NAMES[:8],
+    "dolibarr_user_search",
+    "dolibarr_lead_search",
+    "dolibarr_lead_get",
+}
+CREATE_TOOL_NAMES = {"dolibarr_thirdparty_create", "dolibarr_lead_create"}
+MUTATION_TOOL_NAMES = set(TOOL_NAMES) - READ_ONLY_TOOL_NAMES - CREATE_TOOL_NAMES
 
 
 def report_line(
@@ -226,8 +247,20 @@ async def test_all_reporting_tools_cross_real_auth_and_mcp_stack(settings: Setti
                 },
             )
     assert [tool.name for tool in tools.tools] == TOOL_NAMES
+    tool_by_name = {tool.name: tool for tool in tools.tools}
+    annotations_by_name = {}
+    for name, tool in tool_by_name.items():
+        assert tool.annotations is not None, name
+        annotations_by_name[name] = tool.annotations
+    assert all(annotations_by_name[name].read_only_hint for name in READ_ONLY_TOOL_NAMES)
     assert all(
-        tool.annotations is not None and tool.annotations.read_only_hint for tool in tools.tools
+        not annotations_by_name[name].read_only_hint
+        and not annotations_by_name[name].destructive_hint
+        for name in CREATE_TOOL_NAMES
+    )
+    assert all(
+        not annotations_by_name[name].read_only_hint and annotations_by_name[name].destructive_hint
+        for name in MUTATION_TOOL_NAMES
     )
     assert my_report.structured_content is not None
     assert my_report.structured_content["duration_seconds"] == 3600
@@ -241,6 +274,81 @@ async def test_all_reporting_tools_cross_real_auth_and_mcp_stack(settings: Setti
     assert entries.structured_content["entry_count"] == 1
     assert all(token == "fake-token-A" for _path, token in calls)
     assert all("api_key" not in str(tool.input_schema).lower() for tool in tools.tools)
+    assert all("sqlfilters" not in str(tool.input_schema).lower() for tool in tools.tools)
+    assert all("upstream" not in str(tool.input_schema).lower() for tool in tools.tools)
+
+
+async def test_confirmed_sales_write_crosses_auth_and_uses_request_key(
+    settings: Settings,
+) -> None:
+    calls: list[tuple[str, str, str]] = []
+    created = False
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal created
+        path = request.url.path
+        token = request.headers.get("DOLAPIKEY", "")
+        calls.append((request.method, path, token))
+        if path.endswith("/users/info"):
+            return httpx2.Response(200, json=IDENTITIES[token])
+        if path.endswith("/thirdparties") and request.method == "GET":
+            return httpx2.Response(200, json=[])
+        if path.endswith("/thirdparties") and request.method == "POST":
+            created = True
+            assert request.content == b'{"name":"New Prospect","client":2}'
+            return httpx2.Response(200, json=3)
+        if path.endswith("/thirdparties/3") and created:
+            return httpx2.Response(
+                200,
+                json={"id": 3, "name": "New Prospect", "client": 2},
+            )
+        raise AssertionError((request.method, path))
+
+    async with asgi_client(
+        settings,
+        httpx2.MockTransport(handler),
+        token="fake-token-A",
+    ) as client:
+        transport = streamable_http_client("http://localhost/mcp", http_client=client)
+        async with Client(transport, mode="legacy") as mcp_client:
+            preview = await mcp_client.call_tool(
+                "dolibarr_thirdparty_create",
+                {"name": "New Prospect", "customer_status": "prospect"},
+            )
+            assert preview.structured_content is not None
+            assert preview.structured_content["apply"] is False
+            confirmation_token = preview.structured_content["confirmation_token"]
+
+            rejected = await mcp_client.call_tool(
+                "dolibarr_thirdparty_create",
+                {
+                    "name": "New Prospect",
+                    "customer_status": "prospect",
+                    "apply": True,
+                    "confirmation_token": "0" * 64,
+                },
+            )
+            assert rejected.is_error is True
+            assert created is False
+
+            applied = await mcp_client.call_tool(
+                "dolibarr_thirdparty_create",
+                {
+                    "name": "New Prospect",
+                    "customer_status": "prospect",
+                    "apply": True,
+                    "confirmation_token": confirmation_token,
+                },
+            )
+            assert applied.structured_content is not None
+            assert applied.structured_content["outcome"] == "applied"
+            assert applied.structured_content["thirdparty"]["customer_status"] == "prospect"
+
+    write_calls = [
+        call for call in calls if call[0] == "POST" and call[1].endswith("/thirdparties")
+    ]
+    assert write_calls == [("POST", "/dolibarr/api/index.php/thirdparties", "fake-token-A")]
+    assert all(token == "fake-token-A" for _method, _path, token in calls)
 
 
 @pytest.mark.parametrize(

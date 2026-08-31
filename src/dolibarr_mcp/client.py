@@ -5,23 +5,27 @@ from __future__ import annotations
 import ssl
 from email.utils import parsedate_to_datetime
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Self, TypeVar
+from typing import TYPE_CHECKING, Literal, Self, TypeVar
 
 import httpx2
 from pydantic import TypeAdapter, ValidationError
 
 from dolibarr_mcp.errors import (
+    DolibarrConflictError,
     DolibarrNotFoundError,
     DolibarrPermissionDeniedError,
     DolibarrRateLimitedError,
     DolibarrResultLimitError,
     DolibarrUnavailableError,
+    DolibarrWriteRejectedError,
     InvalidDolibarrCredentialsError,
     InvalidDolibarrResponseError,
 )
 from dolibarr_mcp.models import (
+    DolibarrProjectContactPayload,
     DolibarrProjectPayload,
     DolibarrTaskPayload,
+    DolibarrThirdpartyPayload,
     DolibarrTimeEntryPayload,
     DolibarrUserPayload,
     VerifiedIdentity,
@@ -41,15 +45,24 @@ _UPSTREAM_PAGE_SIZE = 100
 _MAX_TASKS = 1000
 _MAX_USERS = 1000
 _MAX_TIME_LINES = 50_000
+_MAX_SALES_RECORDS = 10_000
 
 T = TypeVar("T")
 
 _IDENTITY_ADAPTER = TypeAdapter(DolibarrUserPayload)
 _PROJECT_ADAPTER = TypeAdapter(DolibarrProjectPayload)
+_PROJECT_LIST_ADAPTER = TypeAdapter(list[DolibarrProjectPayload])
+_PROJECT_CONTACT_LIST_ADAPTER = TypeAdapter(list[DolibarrProjectContactPayload])
 _TASK_ADAPTER = TypeAdapter(DolibarrTaskPayload)
 _TASK_LIST_ADAPTER = TypeAdapter(list[DolibarrTaskPayload])
 _TIME_LIST_ADAPTER = TypeAdapter(list[DolibarrTimeEntryPayload])
 _USER_LIST_ADAPTER = TypeAdapter(list[DolibarrUserPayload])
+_THIRDPARTY_ADAPTER = TypeAdapter(DolibarrThirdpartyPayload)
+_THIRDPARTY_LIST_ADAPTER = TypeAdapter(list[DolibarrThirdpartyPayload])
+_INTEGER_ADAPTER = TypeAdapter(int)
+_ANY_ADAPTER = TypeAdapter(object)
+
+HttpMethod = Literal["GET", "POST", "PUT", "DELETE"]
 
 
 def validated_retry_after(response: httpx2.Response) -> str | None:
@@ -117,8 +130,9 @@ class DolibarrClient:
 
     async def get_current_user(self, api_key: str) -> VerifiedIdentity:
         """Validate one request's key without mutating or caching shared client state."""
-        payload = await self._get_typed(
+        payload = await self._request_typed(
             api_key,
+            method="GET",
             url=self._users_info_url,
             adapter=_IDENTITY_ADAPTER,
             identity_request=True,
@@ -199,7 +213,7 @@ class DolibarrClient:
                 params={
                     "limit": _UPSTREAM_PAGE_SIZE,
                     "page": page,
-                    "properties": "id,login,firstname,lastname",
+                    "properties": "id,login,firstname,lastname,status,statut",
                 },
                 adapter=_USER_LIST_ADAPTER,
             )
@@ -207,6 +221,171 @@ class DolibarrClient:
             if len(current) < _UPSTREAM_PAGE_SIZE:
                 return users
         raise DolibarrResultLimitError
+
+    async def get_user(self, api_key: str, user_id: int) -> DolibarrUserPayload:
+        """Return one allowlisted user used for lead assignment."""
+        return await self._get_api(
+            api_key,
+            path=f"users/{user_id}",
+            adapter=_IDENTITY_ADAPTER,
+        )
+
+    async def list_thirdparties(self, api_key: str) -> list[DolibarrThirdpartyPayload]:
+        """Return all accessible allowlisted third parties within a fixed bound."""
+        rows: list[DolibarrThirdpartyPayload] = []
+        properties = (
+            "id,name,name_alias,address,zip,town,country_code,email,phone,tva_intra,client,"
+            "note_public,note_private,tms,date_modification"
+        )
+        for page in range(_MAX_SALES_RECORDS // _UPSTREAM_PAGE_SIZE):
+            current = await self._get_api(
+                api_key,
+                path="thirdparties",
+                params={"limit": _UPSTREAM_PAGE_SIZE, "page": page, "properties": properties},
+                adapter=_THIRDPARTY_LIST_ADAPTER,
+            )
+            rows.extend(current)
+            if len(current) < _UPSTREAM_PAGE_SIZE:
+                return rows
+        raise DolibarrResultLimitError
+
+    async def get_thirdparty(
+        self,
+        api_key: str,
+        thirdparty_id: int,
+    ) -> DolibarrThirdpartyPayload:
+        """Return one allowlisted third party."""
+        return await self._get_api(
+            api_key,
+            path=f"thirdparties/{thirdparty_id}",
+            adapter=_THIRDPARTY_ADAPTER,
+        )
+
+    async def create_thirdparty(self, api_key: str, payload: dict[str, object]) -> int:
+        """Create one third party through the fixed official endpoint."""
+        return await self._request_api(
+            api_key,
+            method="POST",
+            path="thirdparties",
+            json_body=payload,
+            adapter=_INTEGER_ADAPTER,
+        )
+
+    async def update_thirdparty(
+        self,
+        api_key: str,
+        thirdparty_id: int,
+        payload: dict[str, object],
+    ) -> DolibarrThirdpartyPayload:
+        """Apply one allowlisted partial third-party update."""
+        return await self._request_api(
+            api_key,
+            method="PUT",
+            path=f"thirdparties/{thirdparty_id}",
+            json_body=payload,
+            adapter=_THIRDPARTY_ADAPTER,
+        )
+
+    async def list_projects(self, api_key: str) -> list[DolibarrProjectPayload]:
+        """Return accessible project metadata for lead lookup within a fixed bound."""
+        rows: list[DolibarrProjectPayload] = []
+        properties = (
+            "id,ref,title,socid,fk_soc,status,usage_opportunity,fk_opp_status,opp_status,"
+            "opp_status_code,description,opp_amount,opp_percent,date_start,date_end,"
+            "note_public,note_private,tms,date_modification"
+        )
+        for page in range(_MAX_SALES_RECORDS // _UPSTREAM_PAGE_SIZE):
+            current = await self._get_api(
+                api_key,
+                path="projects",
+                params={"limit": _UPSTREAM_PAGE_SIZE, "page": page, "properties": properties},
+                adapter=_PROJECT_LIST_ADAPTER,
+            )
+            rows.extend(current)
+            if len(current) < _UPSTREAM_PAGE_SIZE:
+                return rows
+        raise DolibarrResultLimitError
+
+    async def create_project(self, api_key: str, payload: dict[str, object]) -> int:
+        """Create one project through the fixed official endpoint."""
+        return await self._request_api(
+            api_key,
+            method="POST",
+            path="projects",
+            json_body=payload,
+            adapter=_INTEGER_ADAPTER,
+        )
+
+    async def update_project(
+        self,
+        api_key: str,
+        project_id: int,
+        payload: dict[str, object],
+    ) -> DolibarrProjectPayload:
+        """Apply one allowlisted partial project update."""
+        return await self._request_api(
+            api_key,
+            method="PUT",
+            path=f"projects/{project_id}",
+            json_body=payload,
+            adapter=_PROJECT_ADAPTER,
+        )
+
+    async def validate_project(self, api_key: str, project_id: int) -> None:
+        """Open or reopen a project using Dolibarr's dedicated transition endpoint."""
+        await self._request_api(
+            api_key,
+            method="POST",
+            path=f"projects/{project_id}/validate",
+            json_body={"notrigger": 0},
+            adapter=_ANY_ADAPTER,
+        )
+
+    async def get_project_contacts(
+        self,
+        api_key: str,
+        project_id: int,
+    ) -> list[DolibarrProjectContactPayload]:
+        """Return allowlisted internal and external project contact relations."""
+        return await self._get_api(
+            api_key,
+            path=f"projects/{project_id}/contacts",
+            adapter=_PROJECT_CONTACT_LIST_ADAPTER,
+        )
+
+    async def add_project_leader(
+        self,
+        api_key: str,
+        project_id: int,
+        user_id: int,
+    ) -> None:
+        """Add one internal PROJECTLEADER relation through the official API."""
+        await self._request_api(
+            api_key,
+            method="POST",
+            path=f"projects/{project_id}/contacts",
+            json_body={
+                "fk_socpeople": user_id,
+                "type_contact": "PROJECTLEADER",
+                "source": "internal",
+                "notrigger": 0,
+            },
+            adapter=_ANY_ADAPTER,
+        )
+
+    async def delete_project_leader(
+        self,
+        api_key: str,
+        project_id: int,
+        user_id: int,
+    ) -> None:
+        """Delete one PROJECTLEADER relation through the fixed official route."""
+        await self._request_api(
+            api_key,
+            method="DELETE",
+            path=f"projects/{project_id}/contact/{user_id}/PROJECTLEADER",
+            adapter=_ANY_ADAPTER,
+        )
 
     async def _get_api(
         self,
@@ -219,30 +398,66 @@ class DolibarrClient:
         if not path or path.startswith("/") or ".." in path:
             message = "Invalid internal Dolibarr API path"
             raise RuntimeError(message)
-        return await self._get_typed(
+        return await self._request_api(
             api_key,
+            method="GET",
+            path=path,
+            params=params,
+            adapter=adapter,
+        )
+
+    async def _request_api(
+        self,
+        api_key: str,
+        *,
+        method: HttpMethod,
+        path: str,
+        adapter: TypeAdapter[T],
+        params: dict[str, str | int] | None = None,
+        json_body: dict[str, object] | None = None,
+    ) -> T:
+        """Perform one fixed-path Dolibarr API request."""
+        if not path or path.startswith("/") or ".." in path:
+            message = "Invalid internal Dolibarr API path"
+            raise RuntimeError(message)
+        return await self._request_typed(
+            api_key,
+            method=method,
             url=f"{self._api_base_url}/{path}",
             params=params,
+            json_body=json_body,
             adapter=adapter,
             identity_request=False,
         )
 
-    async def _get_typed(
+    async def _request_typed(  # noqa: PLR0912 - explicit status mapping is security-sensitive
         self,
         api_key: str,
         *,
+        method: HttpMethod,
         url: str,
         adapter: TypeAdapter[T],
         params: dict[str, str | int] | None = None,
+        json_body: dict[str, object] | None = None,
         identity_request: bool,
     ) -> T:
-        """Perform one credential-isolated GET and validate its allowlisted payload."""
+        """Perform one credential-isolated request and validate its allowlisted payload."""
         try:
-            response = await self._client.get(
-                url,
-                headers={"DOLAPIKEY": api_key},
-                params=params,
-            )
+            if json_body is None:
+                response = await self._client.request(
+                    method,
+                    url,
+                    headers={"DOLAPIKEY": api_key},
+                    params=params,
+                )
+            else:
+                response = await self._client.request(
+                    method,
+                    url,
+                    headers={"DOLAPIKEY": api_key},
+                    params=params,
+                    json=json_body,
+                )
         except httpx2.TimeoutException:
             raise DolibarrUnavailableError from None
         except httpx2.RequestError:
@@ -256,10 +471,18 @@ class DolibarrClient:
             raise DolibarrPermissionDeniedError
         if not identity_request and response.status_code == HTTPStatus.NOT_FOUND:
             raise DolibarrNotFoundError
+        if not identity_request and response.status_code == HTTPStatus.CONFLICT:
+            raise DolibarrConflictError
         if response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
             raise DolibarrRateLimitedError(retry_after=validated_retry_after(response))
         if HTTPStatus.INTERNAL_SERVER_ERROR <= response.status_code <= _MAX_SERVER_ERROR_STATUS:
             raise DolibarrUnavailableError
+        if method != "GET" and response.status_code in {
+            HTTPStatus.BAD_REQUEST,
+            HTTPStatus.METHOD_NOT_ALLOWED,
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+        }:
+            raise DolibarrWriteRejectedError
         if HTTPStatus.BAD_REQUEST <= response.status_code <= _MAX_CLIENT_ERROR_STATUS:
             raise InvalidDolibarrResponseError
         if not HTTPStatus.OK <= response.status_code <= _MAX_SUCCESS_STATUS:

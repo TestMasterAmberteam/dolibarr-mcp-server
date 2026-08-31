@@ -12,11 +12,13 @@ import dolibarr_mcp.client as client_module
 from dolibarr_mcp.client import DolibarrClient, validated_retry_after
 from dolibarr_mcp.config import Settings
 from dolibarr_mcp.errors import (
+    DolibarrConflictError,
     DolibarrNotFoundError,
     DolibarrPermissionDeniedError,
     DolibarrRateLimitedError,
     DolibarrResultLimitError,
     DolibarrUnavailableError,
+    DolibarrWriteRejectedError,
     InvalidDolibarrCredentialsError,
     InvalidDolibarrResponseError,
 )
@@ -222,7 +224,7 @@ async def test_reporting_gets_use_fixed_paths_and_individual_credentials(
     assert all(request.headers["DOLAPIKEY"] == "report-key" for request in seen)
     assert all("Authorization" not in request.headers for request in seen)
     users_request = next(request for request in seen if request.url.path.endswith("/users"))
-    assert users_request.url.params["properties"] == "id,login,firstname,lastname"
+    assert users_request.url.params["properties"] == ("id,login,firstname,lastname,status,statut")
 
 
 async def test_task_listing_paginates_until_a_short_page(settings: Settings) -> None:
@@ -308,3 +310,149 @@ async def test_exact_user_page_bound_is_rejected(
     async with DolibarrClient(settings, transport=transport) as client:
         with pytest.raises(DolibarrResultLimitError):
             await client.list_users("key")
+
+
+async def test_sales_client_uses_only_fixed_api_routes_and_payloads(settings: Settings) -> None:
+    seen: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:  # noqa: PLR0911
+        seen.append(request)
+        path = request.url.path
+        if path.endswith("/thirdparties") and request.method == "GET":
+            return httpx2.Response(200, json=[{"id": 1, "name": "Acme", "client": 2}])
+        if path.endswith("/thirdparties") and request.method == "POST":
+            return httpx2.Response(200, json="2")
+        if path.endswith("/thirdparties/1"):
+            return httpx2.Response(200, json={"id": 1, "name": "Acme", "client": 2})
+        if path.endswith("/projects") and request.method == "GET":
+            return httpx2.Response(
+                200,
+                json=[
+                    {
+                        "id": 10,
+                        "ref": "PJ-10",
+                        "title": "Lead",
+                        "usage_opportunity": 1,
+                    }
+                ],
+            )
+        if path.endswith("/projects") and request.method == "POST":
+            return httpx2.Response(200, json=20)
+        if path.endswith("/projects/10/contacts"):
+            if request.method == "GET":
+                return httpx2.Response(
+                    200,
+                    json=[
+                        {
+                            "id": 7,
+                            "rowid": 70,
+                            "code": "PROJECTLEADER",
+                            "source": "internal",
+                        }
+                    ],
+                )
+            return httpx2.Response(200, json={"id": 10})
+        if path.endswith("/projects/10/contact/7/PROJECTLEADER"):
+            return httpx2.Response(200, json={"id": 10})
+        if path.endswith("/projects/10/validate"):
+            return httpx2.Response(200, json={"success": {"code": 200}})
+        if path.endswith("/projects/10"):
+            return httpx2.Response(
+                200,
+                json={
+                    "id": 10,
+                    "ref": "PJ-10",
+                    "title": "Lead",
+                    "usage_opportunity": 1,
+                },
+            )
+        if path.endswith("/users/7"):
+            return httpx2.Response(200, json={"id": 7, "login": "alice", "status": 1})
+        raise AssertionError((request.method, path))
+
+    async with DolibarrClient(
+        settings,
+        transport=httpx2.MockTransport(handler),
+    ) as client:
+        thirdparties = await client.list_thirdparties("sales-key")
+        thirdparty = await client.get_thirdparty("sales-key", 1)
+        created_thirdparty = await client.create_thirdparty(
+            "sales-key", {"name": "New", "client": 2}
+        )
+        updated_thirdparty = await client.update_thirdparty("sales-key", 1, {"town": "Warsaw"})
+        projects = await client.list_projects("sales-key")
+        created_project = await client.create_project(
+            "sales-key", {"ref": "auto", "title": "New Lead"}
+        )
+        updated_project = await client.update_project("sales-key", 10, {"fk_opp_status": 4})
+        contacts = await client.get_project_contacts("sales-key", 10)
+        await client.add_project_leader("sales-key", 10, 7)
+        await client.delete_project_leader("sales-key", 10, 7)
+        await client.validate_project("sales-key", 10)
+        selected_user = await client.get_user("sales-key", 7)
+
+    assert thirdparties[0].customer_classification == 2
+    assert thirdparty.name == "Acme"
+    assert created_thirdparty == 2
+    assert updated_thirdparty.thirdparty_id == 1
+    assert projects[0].usage_opportunity is True
+    assert created_project == 20
+    assert updated_project.project_id == 10
+    assert contacts[0].row_id == 70
+    assert selected_user.login == "alice"
+    assert all(request.headers["DOLAPIKEY"] == "sales-key" for request in seen)
+    assert all("Authorization" not in request.headers for request in seen)
+    assert any(request.method == "DELETE" for request in seen)
+    create_request = next(
+        request
+        for request in seen
+        if request.method == "POST" and request.url.path.endswith("/thirdparties")
+    )
+    assert create_request.content == b'{"name":"New","client":2}'
+    assert all("sqlfilters" not in request.url.params for request in seen)
+
+
+@pytest.mark.parametrize(
+    ("status_code", "error_type"),
+    [
+        (409, DolibarrConflictError),
+        (400, DolibarrWriteRejectedError),
+        (422, DolibarrWriteRejectedError),
+    ],
+)
+async def test_sales_write_errors_are_sanitized_and_typed(
+    settings: Settings,
+    status_code: int,
+    error_type: type[Exception],
+) -> None:
+    transport = httpx2.MockTransport(lambda _request: httpx2.Response(status_code))
+    async with DolibarrClient(settings, transport=transport) as client:
+        with pytest.raises(error_type):
+            await client.create_thirdparty("key", {"name": "Rejected"})
+
+
+async def test_sales_list_bound_is_enforced(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(client_module, "_MAX_SALES_RECORDS", 100)
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if request.url.path.endswith("/thirdparties"):
+            return httpx2.Response(
+                200,
+                json=[{"id": index + 1, "name": f"Company {index}"} for index in range(100)],
+            )
+        return httpx2.Response(
+            200,
+            json=[
+                {"id": index + 1, "ref": f"P-{index}", "title": f"Project {index}"}
+                for index in range(100)
+            ],
+        )
+
+    async with DolibarrClient(settings, transport=httpx2.MockTransport(handler)) as client:
+        with pytest.raises(DolibarrResultLimitError):
+            await client.list_thirdparties("key")
+        with pytest.raises(DolibarrResultLimitError):
+            await client.list_projects("key")

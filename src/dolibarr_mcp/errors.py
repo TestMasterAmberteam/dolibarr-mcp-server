@@ -64,6 +64,34 @@ class DolibarrResultLimitError(DolibarrError):
     public_message = "Dolibarr report exceeds the safe processing limit."
 
 
+class DolibarrConflictError(DolibarrError):
+    """Dolibarr rejected a write because the resource state conflicts."""
+
+    status_code = 409
+    public_message = "Dolibarr resource state conflicts with the requested change."
+
+
+class DolibarrWriteRejectedError(DolibarrError):
+    """Dolibarr rejected an allowlisted write payload."""
+
+    status_code = 422
+    public_message = "Dolibarr rejected the submitted change."
+
+
+class SalesRequestError(DolibarrError):
+    """A sales-tool request is inconsistent after schema validation."""
+
+    status_code = 422
+    public_message = "Invalid sales operation parameters."
+
+
+class SalesConfirmationError(DolibarrError):
+    """A preview token is missing or no longer matches current state."""
+
+    status_code = 409
+    public_message = "Sales operation preview is missing or stale."
+
+
 class ReportRequestError(DolibarrError):
     """A report request is internally inconsistent after schema validation."""
 

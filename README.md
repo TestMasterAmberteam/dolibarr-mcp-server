@@ -1,8 +1,9 @@
 # dolibarr-mcp-server
 
 A remote, stateless [Model Context Protocol](https://modelcontextprotocol.io/) server that
-authenticates each caller with that caller's own Dolibarr API key. It exposes an identity tool and
-five read-only time-reporting tools while preserving Dolibarr's per-user permissions.
+authenticates each caller with that caller's own Dolibarr API key. It exposes 18 allowlisted tools
+for identity, time reporting, third parties, and project-based sales leads while preserving
+Dolibarr's per-user permissions.
 
 > **MVP status:** suitable for evaluation and controlled deployments. The project intentionally
 > has no local users, sessions, database, token cache, administrator key, or OAuth façade.
@@ -16,6 +17,8 @@ five read-only time-reporting tools while preserving Dolibarr's per-user permiss
 - request-scoped safe identity and credential context; API keys are actively cleared and never
   retained or returned;
 - typed time-entry detail and aggregation by day, user, project, task, month, and ISO week;
+- API-only third-party and project-lead search with allowlisted typed projections;
+- two-step preview-token confirmation for create and update operations;
 - explicit timeouts, connection limits, TLS verification, Host and Origin allowlists;
 - unauthenticated `/health/live` and `/health/ready` probes;
 - structured logs with correlation IDs and central credential redaction;
@@ -30,9 +33,10 @@ flowchart LR
     H --> B[Strict Bearer middleware]
     B -->|DOLAPIKEY: user key| D[Dolibarr /users/info]
     D -->|validated safe profile| X[request-scoped auth and credential contexts]
-    X --> M[MCPServer: six read-only tools]
-    M -->|DOLAPIKEY: same user key| R[Fixed Dolibarr reporting GETs]
-    R -->|allowlisted time data| M
+    X --> M[MCPServer: 18 allowlisted tools]
+    M -->|DOLAPIKEY: same user key| R[Fixed Dolibarr REST operations]
+    R -->|allowlisted reporting and sales data| M
+    M --> P[Stateless mutation preview and stale-state token]
 ```
 
 The Bearer value is a Dolibarr API key, not an OAuth access token. The server does not publish
@@ -42,7 +46,8 @@ key on every HTTP request, projects the upstream response to `user_id`, `login`,
 
 See [architecture](docs/architecture.md), [security design](docs/security.md), and
 [ADR 0001](docs/adr/0001-direct-dolibarr-api-key-authentication.md) plus
-[ADR 0002](docs/adr/0002-request-scoped-reporting-credentials.md).
+[ADR 0002](docs/adr/0002-request-scoped-reporting-credentials.md) and
+[ADR 0003](docs/adr/0003-confirmed-api-only-sales-writes.md).
 
 ## Requirements
 
@@ -67,13 +72,13 @@ The server listens on `127.0.0.1:8000` by default. `dolibarr-mcp --help` and
 ## Docker and Compose
 
 ```bash
-docker build -t dolibarr-mcp-server:0.1.0 .
+docker build -t dolibarr-mcp-server:0.2.0 .
 docker run --rm --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m \
   -p 8000:8000 \
   -e DOLIBARR_BASE_URL=https://erp.example.invalid/dolibarr \
   -e HOST=0.0.0.0 \
   -e MCP_ALLOWED_HOSTS=localhost:8000 \
-  dolibarr-mcp-server:0.1.0
+  dolibarr-mcp-server:0.2.0
 ```
 
 Or set `DOLIBARR_BASE_URL` in the operator environment and run `docker compose up --build`.
@@ -142,7 +147,7 @@ After initialization, call `dolibarr_whoami` with no arguments. Its structured r
 }
 ```
 
-## Read-only tools
+## Tools
 
 All dates use `YYYY-MM-DD`, are interpreted in UTC, and form an inclusive range. Durations always
 include exact `duration_seconds`; `duration_hours` is a rounded display value. Positive identifiers
@@ -161,6 +166,37 @@ Grouped tools accept `limit` from 1 to 500 and report `truncated` explicitly. De
 `offset` and `limit` from 1 to 500, and return `entry_count`, `returned_entry_count`, and `has_more`.
 Aggregate tools never return notes. Only `dolibarr_task_timespent` and `dolibarr_time_entries`
 return notes, truncated to 4000 characters.
+
+Sales reads use only fixed official Dolibarr REST endpoints. A lead is a project whose
+`usage_opportunity` flag is set; it is not inferred from the third party's `prospect`
+classification.
+
+| Read-only tool | Main arguments | Result |
+| --- | --- | --- |
+| `dolibarr_thirdparty_search` | optional `query`, `customer_status` | Paged third parties matched on allowlisted fields |
+| `dolibarr_thirdparty_get` | `thirdparty_id` | Allowlisted third-party details and bounded notes |
+| `dolibarr_user_search` | optional `query` | Active users safe to select for lead assignment |
+| `dolibarr_lead_search` | optional query, third party, stage, state, owner | Only projects with `usage_opportunity=1` |
+| `dolibarr_lead_get` | `project_id` | Lead data, sales stage, project state, and `PROJECTLEADER` owners |
+
+Write tools always default to preview. The first call uses `apply=false` and returns changes,
+warnings, and a 64-character `confirmation_token`. Repeat the same call with `apply=true` and that
+token to write. The server re-reads the current API state and rejects a missing or stale token.
+
+| Confirmed write tool | Behavior |
+| --- | --- |
+| `dolibarr_thirdparty_create` | Create a third party with an explicit customer classification |
+| `dolibarr_thirdparty_update` | Update only allowlisted company fields |
+| `dolibarr_lead_create` | Create a draft project with `usage_opportunity=1`, existing third party, and stage |
+| `dolibarr_lead_update` | Update lead facts without changing its control fields |
+| `dolibarr_lead_change_status` | Change only the opportunity-stage identifier |
+| `dolibarr_lead_assign` | Replace internal `PROJECTLEADER` relations with one active user |
+| `dolibarr_lead_open_project` | Validate a draft project or reopen a closed one |
+
+`customer_status` accepts `neutral`, `customer`, `prospect`, or `customer_and_prospect`. Create a
+third party intended for a new lead with `customer_status="prospect"`, then pass its returned ID to
+`dolibarr_lead_create`. Lead creation leaves the project in draft. Opening it is a separate,
+confirmed call.
 
 ## Health and operations
 
@@ -194,7 +230,7 @@ See [development.md](docs/development.md) for the clean-wheel, workflow, and con
 
 ## MVP limitations
 
-- six read-only tools; no resources, prompts, or write tools;
+- no resources or prompts, and no delete tools;
 - no OAuth discovery or token exchange;
 - clients must support a custom Bearer header;
 - one configured Dolibarr host per server deployment;
@@ -202,6 +238,12 @@ See [development.md](docs/development.md) for the clean-wheel, workflow, and con
 - no multi-tenant base URL supplied by a caller or model.
 - global reports use bounded fan-out because Dolibarr 23 has no global paginated time-entry API;
   requests fail explicitly beyond 1000 accessible tasks or 50,000 time lines.
+- sales search uses bounded API pagination and never accepts `sqlfilters`;
+- sales writes exclude extrafields, bank data, personal contacts, arbitrary payload fields,
+  project closing, and returning a project to draft;
+- Dolibarr 23.0.3 has no official endpoint exposing the complete lead-stage dictionary, so callers
+  obtain `stage_id` from existing accessible leads or their Dolibarr configuration;
+- multi-call owner replacement is not transactional; a partial result returns the refreshed state.
 
 Rotate and revoke user keys in Dolibarr. Report vulnerabilities privately as described in
 [SECURITY.md](SECURITY.md); never place credentials or exploit details in a public issue.

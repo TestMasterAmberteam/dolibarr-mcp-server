@@ -18,7 +18,8 @@ not OAuth. Clients must already possess the key and be able to set a custom Auth
 - Use a redacted marker in the SDK access-token object.
 - After successful verification, retain the key only in the active ASGI request's private holder.
 - Clear that mutable holder in `finally`, invalidating references copied to child async contexts.
-- Attach the request key only to fixed-path reporting GETs made during the same `tools/call`.
+- Attach the request key only to fixed-path reporting and sales API calls made during the same
+  `tools/call`.
 - Never log headers, bodies, query strings, identities, upstream payloads, or exceptions containing
   transport details.
 - Centrally redact credential-like mapping keys and recognizable Bearer/DOLAPIKEY strings.
@@ -60,6 +61,29 @@ an upstream URL or arbitrary Dolibarr filter expression. Upstream payloads are p
 allowlists. Aggregate tools omit notes; detailed tools return notes only when explicitly requested
 and truncate them to 4000 characters. Output rows, accessible tasks, and processed time lines have
 hard bounds to limit memory use and model-context amplification.
+
+## Sales data and write boundary
+
+Sales support requires Dolibarr 23.0.3-compatible third-party, project, user, and project-contact
+REST endpoints. The MCP server never connects to the Dolibarr database and never accepts or builds
+`sqlfilters`. It does not install a Dolibarr module or call a custom endpoint.
+
+Upstream sales objects are projected into separate typed allowlists. Searches expose company
+labels and selected lead metadata but omit notes. Detail tools may return public and private notes
+only for records the caller can read, truncated to 4000 characters. Tool inputs cannot select a
+host, path, method, header, arbitrary payload property, extrafield, bank field, or personal contact.
+
+Every write defaults to a non-mutating preview. Applying it requires the preview's stateless token
+and the exact same normalized request while the allowlisted current state is unchanged. This
+reduces accidental and stale writes but is not an authorization mechanism: Dolibarr still decides
+whether the presented user's key may perform each API call. Preview tokens contain no credential
+and are safe to invalidate by changing the request or upstream record.
+
+No write is automatically retried. A timeout after an upstream write can have an ambiguous
+outcome, so callers must re-read before trying again. Replacing project leaders uses several API
+calls and may return `partial`; the refreshed result is authoritative for the state observed after
+the failure. Project closing and returning to draft remain excluded because Dolibarr 23.0.3 lacks
+dedicated REST actions equivalent to its GUI semantics.
 
 ## Secret rotation and incident response
 

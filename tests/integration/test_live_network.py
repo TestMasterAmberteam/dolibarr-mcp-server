@@ -73,6 +73,18 @@ async def test_uvicorn_initialize_list_call_and_clean_shutdown(settings: Setting
             "dolibarr_task_timespent",
             "dolibarr_time_summary",
             "dolibarr_time_entries",
+            "dolibarr_thirdparty_search",
+            "dolibarr_thirdparty_get",
+            "dolibarr_thirdparty_create",
+            "dolibarr_thirdparty_update",
+            "dolibarr_user_search",
+            "dolibarr_lead_search",
+            "dolibarr_lead_get",
+            "dolibarr_lead_create",
+            "dolibarr_lead_update",
+            "dolibarr_lead_change_status",
+            "dolibarr_lead_assign",
+            "dolibarr_lead_open_project",
         ]
         assert result.structured_content == {
             "user_id": 88,

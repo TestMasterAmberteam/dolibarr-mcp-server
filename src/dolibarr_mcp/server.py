@@ -1,4 +1,4 @@
-"""MCP server definition containing the allowlisted read-only tools."""
+"""MCP server definition containing allowlisted reporting and sales tools."""
 
 from __future__ import annotations
 
@@ -12,15 +12,30 @@ from pydantic import Field, ValidationError
 
 from dolibarr_mcp.credentials import get_request_api_key
 from dolibarr_mcp.models import (
+    CustomerStatus,
+    LeadCreateInput,
+    LeadDetail,
+    LeadSearchResult,
+    LeadUpdateInput,
+    MutationPreview,
+    MutationResponse,
+    MutationResult,
     MyTimeReport,
+    ProjectState,
     ProjectTimeReport,
     SummaryGroup,
     TaskTimespentReport,
+    ThirdpartyCreateInput,
+    ThirdpartyDetail,
+    ThirdpartySearchResult,
+    ThirdpartyUpdateInput,
     TimeEntriesReport,
     TimeSummary,
+    UserSearchResult,
     VerifiedIdentity,
 )
 from dolibarr_mcp.reporting import MAX_OUTPUT_ROWS, TimeReportingService
+from dolibarr_mcp.sales import SalesService
 
 if TYPE_CHECKING:
     from dolibarr_mcp.client import DolibarrClient
@@ -28,6 +43,17 @@ if TYPE_CHECKING:
 PositiveIdentifier = Annotated[int, Field(gt=0)]
 OutputLimit = Annotated[int, Field(ge=1, le=MAX_OUTPUT_ROWS)]
 ResultOffset = Annotated[int, Field(ge=0, le=1_000_000)]
+QueryText = Annotated[str, Field(min_length=1, max_length=255)]
+ShortText = Annotated[str, Field(min_length=1, max_length=255)]
+OptionalText = Annotated[str, Field(max_length=1000)]
+NoteText = Annotated[str, Field(max_length=4000)]
+CountryCode = Annotated[str, Field(min_length=2, max_length=3)]
+EmailText = Annotated[str, Field(max_length=320)]
+PhoneText = Annotated[str, Field(max_length=64)]
+VatText = Annotated[str, Field(max_length=64)]
+Amount = Annotated[float, Field(ge=0)]
+Probability = Annotated[float, Field(ge=0, le=100)]
+ConfirmationToken = Annotated[str, Field(min_length=64, max_length=64)]
 
 _READ_ONLY_ANNOTATIONS = ToolAnnotations(
     readOnlyHint=True,
@@ -35,6 +61,28 @@ _READ_ONLY_ANNOTATIONS = ToolAnnotations(
     idempotentHint=True,
     openWorldHint=False,
 )
+
+_CREATE_ANNOTATIONS = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=False,
+    openWorldHint=False,
+)
+
+_MUTATION_ANNOTATIONS = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=False,
+    openWorldHint=False,
+)
+
+
+def _defined(**values: object) -> dict[str, object]:
+    return {key: value for key, value in values.items() if value is not None}
+
+
+def _mutation_response(value: MutationPreview | MutationResult) -> MutationResponse:
+    return MutationResponse.from_mutation(value)
 
 
 def _current_identity() -> VerifiedIdentity:
@@ -50,13 +98,14 @@ def _current_identity() -> VerifiedIdentity:
 
 
 def create_mcp_server(client: DolibarrClient) -> MCPServer[None]:
-    """Build the single shared MCP protocol server and stateless report service."""
+    """Build the shared MCP protocol server and stateless domain services."""
     server: MCPServer[None] = MCPServer(
         name="dolibarr-mcp-server",
         description="Stateless, per-user access to Dolibarr ERP.",
-        version="0.1.0",
+        version="0.2.0",
     )
     reporting = TimeReportingService(client)
+    sales = SalesService(client)
 
     @server.tool(
         name="dolibarr_whoami",
@@ -189,6 +238,352 @@ def create_mcp_server(client: DolibarrClient) -> MCPServer[None]:
             task_id=task_id,
             offset=offset,
             limit=limit,
+        )
+
+    @server.tool(
+        name="dolibarr_thirdparty_search",
+        description=(
+            "Search accessible Dolibarr third parties by safe fields and customer classification."
+        ),
+        annotations=_READ_ONLY_ANNOTATIONS,
+    )
+    async def dolibarr_thirdparty_search(
+        *,
+        query: QueryText | None = None,
+        customer_status: CustomerStatus | None = None,
+        offset: ResultOffset = 0,
+        limit: OutputLimit = 200,
+    ) -> ThirdpartySearchResult:
+        return await sales.thirdparty_search(
+            get_request_api_key(),
+            query=query,
+            customer_status=customer_status,
+            offset=offset,
+            limit=limit,
+        )
+
+    @server.tool(
+        name="dolibarr_thirdparty_get",
+        description="Return allowlisted details for one accessible Dolibarr third party.",
+        annotations=_READ_ONLY_ANNOTATIONS,
+    )
+    async def dolibarr_thirdparty_get(
+        thirdparty_id: PositiveIdentifier,
+    ) -> ThirdpartyDetail:
+        return await sales.thirdparty_get(get_request_api_key(), thirdparty_id)
+
+    @server.tool(
+        name="dolibarr_thirdparty_create",
+        description=(
+            "Preview or explicitly confirm creation of a third party. "
+            "Call first with apply=false, then repeat with its confirmation_token and apply=true."
+        ),
+        annotations=_CREATE_ANNOTATIONS,
+    )
+    async def dolibarr_thirdparty_create(
+        name: ShortText,
+        customer_status: CustomerStatus,
+        *,
+        alias: ShortText | None = None,
+        address: OptionalText | None = None,
+        postal_code: Annotated[str, Field(max_length=32)] | None = None,
+        city: ShortText | None = None,
+        country_code: CountryCode | None = None,
+        email: EmailText | None = None,
+        phone: PhoneText | None = None,
+        vat_number: VatText | None = None,
+        public_note: NoteText | None = None,
+        private_note: NoteText | None = None,
+        apply: bool = False,
+        confirmation_token: ConfirmationToken | None = None,
+    ) -> MutationResponse:
+        data = ThirdpartyCreateInput(
+            name=name,
+            customer_status=customer_status,
+            alias=alias,
+            address=address,
+            postal_code=postal_code,
+            city=city,
+            country_code=country_code,
+            email=email,
+            phone=phone,
+            vat_number=vat_number,
+            public_note=public_note,
+            private_note=private_note,
+        )
+        return _mutation_response(
+            await sales.thirdparty_create(
+                get_request_api_key(),
+                data,
+                apply=apply,
+                confirmation_token=confirmation_token,
+            )
+        )
+
+    @server.tool(
+        name="dolibarr_thirdparty_update",
+        description=(
+            "Preview or explicitly confirm an allowlisted partial third-party update. "
+            "Call first with apply=false, then repeat with its confirmation_token and apply=true."
+        ),
+        annotations=_MUTATION_ANNOTATIONS,
+    )
+    async def dolibarr_thirdparty_update(
+        thirdparty_id: PositiveIdentifier,
+        *,
+        name: ShortText | None = None,
+        customer_status: CustomerStatus | None = None,
+        alias: Annotated[str, Field(max_length=255)] | None = None,
+        address: OptionalText | None = None,
+        postal_code: Annotated[str, Field(max_length=32)] | None = None,
+        city: Annotated[str, Field(max_length=255)] | None = None,
+        country_code: CountryCode | None = None,
+        email: EmailText | None = None,
+        phone: PhoneText | None = None,
+        vat_number: VatText | None = None,
+        public_note: NoteText | None = None,
+        private_note: NoteText | None = None,
+        apply: bool = False,
+        confirmation_token: ConfirmationToken | None = None,
+    ) -> MutationResponse:
+        data = ThirdpartyUpdateInput.model_validate(
+            _defined(
+                name=name,
+                customer_status=customer_status,
+                alias=alias,
+                address=address,
+                postal_code=postal_code,
+                city=city,
+                country_code=country_code,
+                email=email,
+                phone=phone,
+                vat_number=vat_number,
+                public_note=public_note,
+                private_note=private_note,
+            )
+        )
+        return _mutation_response(
+            await sales.thirdparty_update(
+                get_request_api_key(),
+                thirdparty_id,
+                data,
+                apply=apply,
+                confirmation_token=confirmation_token,
+            )
+        )
+
+    @server.tool(
+        name="dolibarr_user_search",
+        description="Search accessible active Dolibarr users for lead assignment.",
+        annotations=_READ_ONLY_ANNOTATIONS,
+    )
+    async def dolibarr_user_search(
+        *,
+        query: QueryText | None = None,
+        offset: ResultOffset = 0,
+        limit: OutputLimit = 200,
+    ) -> UserSearchResult:
+        return await sales.user_search(
+            get_request_api_key(),
+            query=query,
+            offset=offset,
+            limit=limit,
+        )
+
+    @server.tool(
+        name="dolibarr_lead_search",
+        description=("Search accessible project leads, defined strictly by usage_opportunity=1."),
+        annotations=_READ_ONLY_ANNOTATIONS,
+    )
+    async def dolibarr_lead_search(
+        *,
+        query: QueryText | None = None,
+        thirdparty_id: PositiveIdentifier | None = None,
+        stage_id: PositiveIdentifier | None = None,
+        project_state: ProjectState | None = None,
+        owner_user_id: PositiveIdentifier | None = None,
+        offset: ResultOffset = 0,
+        limit: OutputLimit = 200,
+    ) -> LeadSearchResult:
+        return await sales.lead_search(
+            get_request_api_key(),
+            query=query,
+            thirdparty_id=thirdparty_id,
+            stage_id=stage_id,
+            project_state=project_state,
+            owner_user_id=owner_user_id,
+            offset=offset,
+            limit=limit,
+        )
+
+    @server.tool(
+        name="dolibarr_lead_get",
+        description="Return allowlisted details for one project marked as a Dolibarr lead.",
+        annotations=_READ_ONLY_ANNOTATIONS,
+    )
+    async def dolibarr_lead_get(project_id: PositiveIdentifier) -> LeadDetail:
+        return await sales.lead_get(get_request_api_key(), project_id)
+
+    @server.tool(
+        name="dolibarr_lead_create",
+        description=(
+            "Preview or explicitly confirm creation of a draft project lead. "
+            "An existing thirdparty_id and sales stage_id are required."
+        ),
+        annotations=_CREATE_ANNOTATIONS,
+    )
+    async def dolibarr_lead_create(
+        thirdparty_id: PositiveIdentifier,
+        title: ShortText,
+        stage_id: PositiveIdentifier,
+        *,
+        description: NoteText | None = None,
+        amount: Amount | None = None,
+        probability_percent: Probability | None = None,
+        date_start: date | None = None,
+        date_end: date | None = None,
+        public_note: NoteText | None = None,
+        private_note: NoteText | None = None,
+        apply: bool = False,
+        confirmation_token: ConfirmationToken | None = None,
+    ) -> MutationResponse:
+        data = LeadCreateInput(
+            thirdparty_id=thirdparty_id,
+            title=title,
+            stage_id=stage_id,
+            description=description,
+            amount=amount,
+            probability_percent=probability_percent,
+            date_start=date_start,
+            date_end=date_end,
+            public_note=public_note,
+            private_note=private_note,
+        )
+        return _mutation_response(
+            await sales.lead_create(
+                get_request_api_key(),
+                data,
+                apply=apply,
+                confirmation_token=confirmation_token,
+            )
+        )
+
+    @server.tool(
+        name="dolibarr_lead_update",
+        description=(
+            "Preview or explicitly confirm an allowlisted lead update. "
+            "Sales stage, project state, lead flag, and owner are handled by dedicated tools."
+        ),
+        annotations=_MUTATION_ANNOTATIONS,
+    )
+    async def dolibarr_lead_update(
+        project_id: PositiveIdentifier,
+        *,
+        thirdparty_id: PositiveIdentifier | None = None,
+        title: ShortText | None = None,
+        description: NoteText | None = None,
+        amount: Amount | None = None,
+        probability_percent: Probability | None = None,
+        date_start: date | None = None,
+        date_end: date | None = None,
+        public_note: NoteText | None = None,
+        private_note: NoteText | None = None,
+        apply: bool = False,
+        confirmation_token: ConfirmationToken | None = None,
+    ) -> MutationResponse:
+        data = LeadUpdateInput.model_validate(
+            _defined(
+                thirdparty_id=thirdparty_id,
+                title=title,
+                description=description,
+                amount=amount,
+                probability_percent=probability_percent,
+                date_start=date_start,
+                date_end=date_end,
+                public_note=public_note,
+                private_note=private_note,
+            )
+        )
+        return _mutation_response(
+            await sales.lead_update(
+                get_request_api_key(),
+                project_id,
+                data,
+                apply=apply,
+                confirmation_token=confirmation_token,
+            )
+        )
+
+    @server.tool(
+        name="dolibarr_lead_change_status",
+        description=(
+            "Preview or explicitly confirm changing only a lead's sales-stage identifier."
+        ),
+        annotations=_MUTATION_ANNOTATIONS,
+    )
+    async def dolibarr_lead_change_status(
+        project_id: PositiveIdentifier,
+        stage_id: PositiveIdentifier,
+        *,
+        apply: bool = False,
+        confirmation_token: ConfirmationToken | None = None,
+    ) -> MutationResponse:
+        return _mutation_response(
+            await sales.lead_change_status(
+                get_request_api_key(),
+                project_id,
+                stage_id,
+                apply=apply,
+                confirmation_token=confirmation_token,
+            )
+        )
+
+    @server.tool(
+        name="dolibarr_lead_assign",
+        description=(
+            "Preview or explicitly confirm replacing internal PROJECTLEADER relations "
+            "with one active Dolibarr user."
+        ),
+        annotations=_MUTATION_ANNOTATIONS,
+    )
+    async def dolibarr_lead_assign(
+        project_id: PositiveIdentifier,
+        user_id: PositiveIdentifier,
+        *,
+        apply: bool = False,
+        confirmation_token: ConfirmationToken | None = None,
+    ) -> MutationResponse:
+        return _mutation_response(
+            await sales.lead_assign(
+                get_request_api_key(),
+                project_id,
+                user_id,
+                apply=apply,
+                confirmation_token=confirmation_token,
+            )
+        )
+
+    @server.tool(
+        name="dolibarr_lead_open_project",
+        description=(
+            "Preview or explicitly confirm opening a draft or reopening a closed lead project "
+            "through Dolibarr's dedicated validate endpoint."
+        ),
+        annotations=_MUTATION_ANNOTATIONS,
+    )
+    async def dolibarr_lead_open_project(
+        project_id: PositiveIdentifier,
+        *,
+        apply: bool = False,
+        confirmation_token: ConfirmationToken | None = None,
+    ) -> MutationResponse:
+        return _mutation_response(
+            await sales.lead_open_project(
+                get_request_api_key(),
+                project_id,
+                apply=apply,
+                confirmation_token=confirmation_token,
+            )
         )
 
     return server

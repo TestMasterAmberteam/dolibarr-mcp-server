@@ -53,6 +53,8 @@ Dolibarr upstream.
 - API keys are HTTP credentials, never tool arguments or application settings.
 - New auth behavior requires HTTP integration tests; in-memory MCP tests do not exercise auth.
 - Do not add retries without a separate, reviewed policy for idempotency and overload.
+- Keep sales tests on mock transports. Any live write requires a rotated test key, disposable
+  records, and separate explicit authorization for the exact mutation.
 - Do not add OAuth metadata without a real external authorization server and an ADR.
 - Update documentation, changelog, tests, and security analysis together.
 

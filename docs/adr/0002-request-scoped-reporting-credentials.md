@@ -60,4 +60,3 @@ Costs and constraints:
 - Passing a key as a tool argument would expose it to the model-facing protocol.
 - Persisting or caching keys would extend credential lifetime and delay revocation.
 - Accepting arbitrary REST paths or `sqlfilters` would turn the server into an unbounded proxy.
-

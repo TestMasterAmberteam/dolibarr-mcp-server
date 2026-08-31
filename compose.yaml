@@ -2,7 +2,7 @@ services:
   dolibarr-mcp:
     build:
       context: .
-    image: dolibarr-mcp-server:0.1.0
+    image: dolibarr-mcp-server:0.2.0
     environment:
       DOLIBARR_BASE_URL: ${DOLIBARR_BASE_URL:?Set DOLIBARR_BASE_URL to your Dolibarr HTTPS URL}
       HOST: 0.0.0.0
