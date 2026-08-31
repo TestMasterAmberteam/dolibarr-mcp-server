@@ -12,6 +12,7 @@ runtime-requirements.txt
 .pytest-work
 .mypy_cache
 .ruff_cache
+.playwright-mcp
 .coverage
 .env
 dist
