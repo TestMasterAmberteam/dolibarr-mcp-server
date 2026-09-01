@@ -1,8 +1,8 @@
 # dolibarr-mcp-server
 
 A remote, stateless [Model Context Protocol](https://modelcontextprotocol.io/) server that
-authenticates each caller with that caller's own Dolibarr API key. It exposes 18 allowlisted tools
-for identity, time reporting, third parties, and project-based sales leads while preserving
+authenticates each caller with that caller's own Dolibarr API key. It exposes 28 allowlisted tools
+for identity, time reporting, sales records, and leave requests while preserving
 Dolibarr's per-user permissions.
 
 > **MVP status:** suitable for evaluation and controlled deployments. The project intentionally
@@ -18,7 +18,9 @@ Dolibarr's per-user permissions.
   retained or returned;
 - typed time-entry detail and aggregation by day, user, project, task, month, and ISO week;
 - API-only third-party and project-lead search with allowlisted typed projections;
-- two-step preview-token confirmation for create and update operations;
+- typed leave-type lookup and leave-request search, detail, create, update, submit, approve,
+  refuse, cancel, and reopen operations through official fixed API paths;
+- two-step preview-token confirmation for every create, update, and lifecycle transition;
 - explicit timeouts, connection limits, TLS verification, Host and Origin allowlists;
 - unauthenticated `/health/live` and `/health/ready` probes;
 - structured logs with correlation IDs and central credential redaction;
@@ -33,9 +35,9 @@ flowchart LR
     H --> B[Strict Bearer middleware]
     B -->|DOLAPIKEY: user key| D[Dolibarr /users/info]
     D -->|validated safe profile| X[request-scoped auth and credential contexts]
-    X --> M[MCPServer: 18 allowlisted tools]
+    X --> M[MCPServer: 28 allowlisted tools]
     M -->|DOLAPIKEY: same user key| R[Fixed Dolibarr REST operations]
-    R -->|allowlisted reporting and sales data| M
+    R -->|allowlisted reporting, sales, and leave data| M
     M --> P[Stateless mutation preview and stale-state token]
 ```
 
@@ -47,13 +49,15 @@ key on every HTTP request, projects the upstream response to `user_id`, `login`,
 See [architecture](docs/architecture.md), [security design](docs/security.md), and
 [ADR 0001](docs/adr/0001-direct-dolibarr-api-key-authentication.md) plus
 [ADR 0002](docs/adr/0002-request-scoped-reporting-credentials.md) and
-[ADR 0003](docs/adr/0003-confirmed-api-only-sales-writes.md).
+[ADR 0003](docs/adr/0003-confirmed-api-only-sales-writes.md) plus
+[ADR 0004](docs/adr/0004-confirmed-api-only-leave-request-workflow.md).
 
 ## Requirements
 
 - Python 3.12 or newer;
 - [uv](https://docs.astral.sh/uv/);
-- Dolibarr 23.0 or newer with its REST API and Projects module enabled;
+- Dolibarr 23.0 or newer with its REST API, Projects module, and
+  Leave/Holiday module enabled;
 - one Dolibarr API key per MCP user;
 - HTTPS and a rate-limiting reverse proxy for production.
 
@@ -72,13 +76,13 @@ The server listens on `127.0.0.1:8000` by default. `dolibarr-mcp --help` and
 ## Docker and Compose
 
 ```bash
-docker build -t dolibarr-mcp-server:0.2.0 .
+docker build -t dolibarr-mcp-server:0.3.0 .
 docker run --rm --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m \
   -p 8000:8000 \
   -e DOLIBARR_BASE_URL=https://erp.example.invalid/dolibarr \
   -e HOST=0.0.0.0 \
   -e MCP_ALLOWED_HOSTS=localhost:8000 \
-  dolibarr-mcp-server:0.2.0
+  dolibarr-mcp-server:0.3.0
 ```
 
 Or set `DOLIBARR_BASE_URL` in the operator environment and run `docker compose up --build`.
@@ -179,6 +183,15 @@ classification.
 | `dolibarr_lead_search` | optional query, third party, stage, state, owner | Only projects with `usage_opportunity=1` |
 | `dolibarr_lead_get` | `project_id` | Lead data, sales stage, project state, and `PROJECTLEADER` owners |
 
+Leave reads also use fixed official endpoints and local filtering. Results include only typed
+request fields; Dolibarr decides which employees and requests the caller may access.
+
+| Read-only tool | Main arguments | Result |
+| --- | --- | --- |
+| `dolibarr_leave_type_list` | none | Active leave types and their balance behavior |
+| `dolibarr_leave_request_search` | optional employee, status, and overlapping date range | Paged leave-request summaries |
+| `dolibarr_leave_request_get` | `request_id` | One allowlisted leave request with bounded text |
+
 Write tools always default to preview. The first call uses `apply=false` and returns changes,
 warnings, and a 64-character `confirmation_token`. Repeat the same call with `apply=true` and that
 token to write. The server re-reads the current API state and rejects a missing or stale token.
@@ -194,12 +207,31 @@ token to write. The server re-reads the current API state and rejects a missing 
 | `dolibarr_lead_open_project` | Validate a draft project or reopen a closed one |
 
 `customer_status` accepts `neutral`, `customer`, `prospect`, or `customer_and_prospect`. Create a
+| `dolibarr_leave_request_create` | Create a draft request; Dolibarr validates balance and overlap |
+| `dolibarr_leave_request_update` | Update allowlisted fields only while the request is draft |
+| `dolibarr_leave_request_submit` | Move a draft request to submitted |
+| `dolibarr_leave_request_approve` | Approve a submitted request with an explicit balance warning |
+| `dolibarr_leave_request_refuse` | Refuse a submitted request with a required reason |
+| `dolibarr_leave_request_cancel` | Cancel a submitted or approved request |
+| `dolibarr_leave_request_reopen` | Reopen a canceled request to submitted |
 third party intended for a new lead with `customer_status="prospect"`, then pass its returned ID to
 `dolibarr_lead_create`. Lead creation leaves the project in draft. Opening it is a separate,
 confirmed call.
 
 ## Health and operations
 
+
+Leave-request status transitions are deliberately constrained:
+`draft -> submitted -> approved|refused`, `submitted|approved -> canceled`, and
+`canceled -> submitted`. Delete is not exposed. Approval never bypasses Dolibarr's permissions,
+balance, overlap, or module policy; the preview calls this out before confirmation.
+
+`half_day_mode` accepts:
+
+- `full_days`;
+- `start_afternoon_end_afternoon`;
+- `start_morning_end_morning`;
+- `start_afternoon_end_morning`.
 ```bash
 curl --fail http://127.0.0.1:8000/health/live
 curl --fail http://127.0.0.1:8000/health/ready
@@ -249,6 +281,10 @@ Rotate and revoke user keys in Dolibarr. Report vulnerabilities privately as des
 [SECURITY.md](SECURITY.md); never place credentials or exploit details in a public issue.
 
 ## Community
+- leave searches process at most 10,000 accessible requests and never accept `sqlfilters`;
+- only drafts can be edited, status transitions use dedicated Dolibarr action endpoints, and no
+  delete operation is exposed;
+- leave balance and negative-balance policy remain exclusively authoritative in Dolibarr.
 
 - [Contributing](CONTRIBUTING.md)
 - [Support](SUPPORT.md)

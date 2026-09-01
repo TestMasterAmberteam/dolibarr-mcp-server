@@ -19,6 +19,13 @@ NonEmptyString = Annotated[str, StringConstraints(min_length=1, max_length=255)]
 SummaryGroup = Literal["user", "project", "task", "month", "week"]
 CustomerStatus = Literal["neutral", "customer", "prospect", "customer_and_prospect"]
 ProjectState = Literal["draft", "open", "closed"]
+LeaveRequestStatus = Literal["draft", "submitted", "approved", "canceled", "refused"]
+LeaveHalfDayMode = Literal[
+    "full_days",
+    "start_afternoon_end_afternoon",
+    "start_morning_end_morning",
+    "start_afternoon_end_morning",
+]
 MutationOutcome = Literal["applied", "no_op", "partial"]
 
 
@@ -234,6 +241,58 @@ class DolibarrProjectContactPayload(BaseModel):
     def blank_contact_value(cls, value: object) -> object:
         """Normalize empty optional contact relation values."""
         return _blank_to_none(value)
+
+
+class DolibarrLeaveRequestPayload(BaseModel):
+    """Allowlisted subset of one Dolibarr leave request."""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    request_id: int = Field(alias="id", gt=0)
+    reference: str | int | None = Field(default=None, alias="ref")
+    employee_id: int = Field(alias="fk_user", gt=0)
+    approver_user_id: int | None = Field(default=None, alias="fk_validator", gt=0)
+    leave_type_id: int = Field(alias="fk_type", gt=0)
+    start_timestamp: int = Field(alias="date_debut", ge=0)
+    end_timestamp: int = Field(alias="date_fin", ge=0)
+    half_day_code: int = Field(default=0, alias="halfday", ge=-1, le=2)
+    status_code: int = Field(
+        validation_alias=AliasChoices("status", "statut"),
+        ge=1,
+        le=5,
+    )
+    description: str | None = Field(default=None, max_length=4000)
+    refusal_reason: str | None = Field(default=None, alias="detail_refuse", max_length=4000)
+
+    @field_validator(
+        "approver_user_id",
+        "reference",
+        "description",
+        "refusal_reason",
+        mode="before",
+    )
+    @classmethod
+    def blank_leave_value(cls, value: object) -> object:
+        """Normalize empty optional leave-request values."""
+        return _blank_to_none(value)
+
+
+class DolibarrLeaveTypePayload(BaseModel):
+    """Allowlisted active leave type from Dolibarr's setup dictionary."""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    type_id: int = Field(validation_alias=AliasChoices("id", "rowid"), gt=0)
+    code: NonEmptyString
+    label: NonEmptyString
+    active: bool = True
+    affects_balance: bool = Field(default=False, alias="affect")
+    block_if_negative: bool = False
+    sort_order: int = Field(
+        default=0,
+        validation_alias=AliasChoices("sortorder", "sort_order"),
+        ge=0,
+    )
 
 
 class UserDescriptor(BaseModel):
@@ -492,6 +551,57 @@ class LeadUpdateInput(BaseModel):
         return self
 
 
+class LeaveRequestCreateInput(BaseModel):
+    """Allowlisted fields for creating one draft leave request."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    employee_id: int = Field(gt=0)
+    leave_type_id: int = Field(gt=0)
+    date_start: date
+    date_end: date
+    half_day_mode: LeaveHalfDayMode = "full_days"
+    approver_user_id: int | None = Field(default=None, gt=0)
+    description: str | None = Field(default=None, max_length=4000)
+
+    @model_validator(mode="after")
+    def validate_dates(self) -> LeaveRequestCreateInput:
+        """Require an ordered leave date range."""
+        if self.date_start > self.date_end:
+            msg = "date_start must not be later than date_end"
+            raise ValueError(msg)
+        return self
+
+
+class LeaveRequestUpdateInput(BaseModel):
+    """Allowlisted partial update for one draft leave request."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    employee_id: int | None = Field(default=None, gt=0)
+    leave_type_id: int | None = Field(default=None, gt=0)
+    date_start: date | None = None
+    date_end: date | None = None
+    half_day_mode: LeaveHalfDayMode | None = None
+    approver_user_id: int | None = Field(default=None, gt=0)
+    description: str | None = Field(default=None, max_length=4000)
+
+    @model_validator(mode="after")
+    def validate_update(self) -> LeaveRequestUpdateInput:
+        """Reject empty updates and reversed supplied date ranges."""
+        if not self.model_fields_set:
+            msg = "At least one leave-request field must be supplied"
+            raise ValueError(msg)
+        if (
+            self.date_start is not None
+            and self.date_end is not None
+            and self.date_start > self.date_end
+        ):
+            msg = "date_start must not be later than date_end"
+            raise ValueError(msg)
+        return self
+
+
 class UserSummary(BaseModel):
     """Safe user identity used for lookup and project ownership."""
 
@@ -501,6 +611,63 @@ class UserSummary(BaseModel):
     login: NonEmptyString | None = None
     first_name: str | None = Field(default=None, max_length=255)
     last_name: str | None = Field(default=None, max_length=255)
+
+
+class LeaveTypeSummary(BaseModel):
+    """One active leave type safe to select for a request."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    leave_type_id: int = Field(gt=0)
+    code: NonEmptyString
+    label: NonEmptyString
+    affects_balance: bool
+    block_if_negative: bool
+
+
+class LeaveTypeListResult(BaseModel):
+    """Bounded list of active Dolibarr leave types."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    count: int = Field(ge=0)
+    rows: list[LeaveTypeSummary]
+
+
+class LeaveRequestSummary(BaseModel):
+    """Allowlisted leave-request row returned by search."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    request_id: int = Field(gt=0)
+    reference: str | None = Field(default=None, max_length=255)
+    employee_id: int = Field(gt=0)
+    approver_user_id: int | None = Field(default=None, gt=0)
+    leave_type_id: int = Field(gt=0)
+    status: LeaveRequestStatus
+    date_start: date
+    date_end: date
+    half_day_mode: LeaveHalfDayMode
+
+
+class LeaveRequestDetail(LeaveRequestSummary):
+    """Detailed authorized leave request with bounded free text."""
+
+    description: str | None = Field(default=None, max_length=4000)
+    refusal_reason: str | None = Field(default=None, max_length=4000)
+
+
+class LeaveRequestSearchResult(BaseModel):
+    """Paged leave-request search response."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    total_count: int = Field(ge=0)
+    returned_count: int = Field(ge=0)
+    offset: int = Field(ge=0)
+    limit: int = Field(gt=0)
+    has_more: bool
+    rows: list[LeaveRequestSummary]
 
 
 class ThirdpartySummary(BaseModel):
@@ -610,7 +777,7 @@ class MutationPreview(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     operation: NonEmptyString
-    target_kind: Literal["thirdparty", "lead"]
+    target_kind: Literal["thirdparty", "lead", "leave_request"]
     target_id: int | None = Field(default=None, gt=0)
     changes: list[MutationChange]
     warnings: list[str]
@@ -630,6 +797,7 @@ class MutationResult(BaseModel):
     partial_errors: list[str] = Field(default_factory=list)
     thirdparty: ThirdpartyDetail | None = None
     lead: LeadDetail | None = None
+    leave_request: LeaveRequestDetail | None = None
 
 
 class MutationResponse(BaseModel):
@@ -639,7 +807,7 @@ class MutationResponse(BaseModel):
 
     operation: NonEmptyString
     phase: Literal["preview", "result"]
-    target_kind: Literal["thirdparty", "lead"]
+    target_kind: Literal["thirdparty", "lead", "leave_request"]
     target_id: int | None = Field(default=None, gt=0)
     changes: list[MutationChange] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -649,6 +817,7 @@ class MutationResponse(BaseModel):
     partial_errors: list[str] = Field(default_factory=list)
     thirdparty: ThirdpartyDetail | None = None
     lead: LeadDetail | None = None
+    leave_request: LeaveRequestDetail | None = None
 
     @classmethod
     def from_mutation(
@@ -670,7 +839,13 @@ class MutationResponse(BaseModel):
         return cls(
             operation=value.operation,
             phase="result",
-            target_kind="thirdparty" if value.thirdparty is not None else "lead",
+            target_kind=(
+                "thirdparty"
+                if value.thirdparty is not None
+                else "lead"
+                if value.lead is not None
+                else "leave_request"
+            ),
             target_id=value.target_id,
             warnings=value.warnings,
             apply=True,
@@ -678,4 +853,5 @@ class MutationResponse(BaseModel):
             partial_errors=value.partial_errors,
             thirdparty=value.thirdparty,
             lead=value.lead,
+            leave_request=value.leave_request,
         )

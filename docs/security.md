@@ -18,8 +18,8 @@ not OAuth. Clients must already possess the key and be able to set a custom Auth
 - Use a redacted marker in the SDK access-token object.
 - After successful verification, retain the key only in the active ASGI request's private holder.
 - Clear that mutable holder in `finally`, invalidating references copied to child async contexts.
-- Attach the request key only to fixed-path reporting and sales API calls made during the same
-  `tools/call`.
+- Attach the request key only to fixed-path reporting, sales, and leave API calls made during the
+  same `tools/call`.
 - Never log headers, bodies, query strings, identities, upstream payloads, or exceptions containing
   transport details.
 - Centrally redact credential-like mapping keys and recognizable Bearer/DOLAPIKEY strings.
@@ -84,6 +84,25 @@ outcome, so callers must re-read before trying again. Replacing project leaders 
 calls and may return `partial`; the refreshed result is authoritative for the state observed after
 the failure. Project closing and returning to draft remain excluded because Dolibarr 23.0.3 lacks
 dedicated REST actions equivalent to its GUI semantics.
+
+## Leave-request data and write boundary
+
+Leave support uses only Dolibarr's official Holidays and setup-dictionary REST endpoints. It does
+not query the database, scrape the UI, accept `sqlfilters`, or expose an arbitrary endpoint,
+method, header, or payload. The caller's own key remains the sole upstream credential, so Dolibarr
+decides whether that caller may read an employee's request or execute a lifecycle action.
+
+Search results expose typed identifiers, dates, half-day mode, and status. Detail results add only
+bounded description and refusal reason. Leave-type lookup exposes the active code, label, and
+configured balance flags. Processing is bounded to 10,000 accessible requests and 1,000 types.
+
+Create, draft update, submit, approve, refuse, cancel, and reopen all use the same non-mutating
+preview and current-state token rule as sales writes. The adapter additionally restricts legal
+source statuses and uses only Dolibarr's dedicated action endpoints. It exposes no delete tool.
+Approval previews always warn that Dolibarr remains authoritative for available balance, overlap,
+permissions, configured approver, and negative-balance policy. The adapter never changes those
+rules or claims that a request is affordable. Writes are not retried automatically; an unexpected
+post-action status is returned as a partial result with refreshed state.
 
 ## Secret rotation and incident response
 

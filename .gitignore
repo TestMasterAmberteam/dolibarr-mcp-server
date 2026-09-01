@@ -13,7 +13,7 @@ htmlcov/
 runtime-requirements.txt
 .pre-commit-cache*/
 .pytest-tmp*/
-.pytest-work/
+.pytest-work*/
 .mypy_cache/
 .ruff_cache/
 .playwright-mcp/

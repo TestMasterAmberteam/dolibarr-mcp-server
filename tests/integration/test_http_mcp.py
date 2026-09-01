@@ -44,6 +44,16 @@ TOOL_NAMES = [
     "dolibarr_lead_change_status",
     "dolibarr_lead_assign",
     "dolibarr_lead_open_project",
+    "dolibarr_leave_type_list",
+    "dolibarr_leave_request_search",
+    "dolibarr_leave_request_get",
+    "dolibarr_leave_request_create",
+    "dolibarr_leave_request_update",
+    "dolibarr_leave_request_submit",
+    "dolibarr_leave_request_approve",
+    "dolibarr_leave_request_refuse",
+    "dolibarr_leave_request_cancel",
+    "dolibarr_leave_request_reopen",
 ]
 
 READ_ONLY_TOOL_NAMES = {
@@ -51,8 +61,15 @@ READ_ONLY_TOOL_NAMES = {
     "dolibarr_user_search",
     "dolibarr_lead_search",
     "dolibarr_lead_get",
+    "dolibarr_leave_type_list",
+    "dolibarr_leave_request_search",
+    "dolibarr_leave_request_get",
 }
-CREATE_TOOL_NAMES = {"dolibarr_thirdparty_create", "dolibarr_lead_create"}
+CREATE_TOOL_NAMES = {
+    "dolibarr_thirdparty_create",
+    "dolibarr_lead_create",
+    "dolibarr_leave_request_create",
+}
 MUTATION_TOOL_NAMES = set(TOOL_NAMES) - READ_ONLY_TOOL_NAMES - CREATE_TOOL_NAMES
 
 
@@ -349,6 +366,189 @@ async def test_confirmed_sales_write_crosses_auth_and_uses_request_key(
     ]
     assert write_calls == [("POST", "/dolibarr/api/index.php/thirdparties", "fake-token-A")]
     assert all(token == "fake-token-A" for _method, _path, token in calls)
+
+
+async def test_confirmed_leave_approval_crosses_auth_and_uses_request_key(
+    settings: Settings,
+) -> None:
+    calls: list[tuple[str, str, str]] = []
+    approved = False
+
+    def leave_payload(status: int) -> dict[str, object]:
+        return {
+            "id": 925,
+            "ref": "LR-925",
+            "fk_user": 7,
+            "fk_validator": 1,
+            "fk_type": 2,
+            "date_debut": 1_786_665_600,
+            "date_fin": 1_786_665_600,
+            "halfday": 0,
+            "status": status,
+            "description": "Requested leave",
+        }
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal approved
+        path = request.url.path
+        token = request.headers.get("DOLAPIKEY", "")
+        calls.append((request.method, path, token))
+        if path.endswith("/users/info"):
+            return httpx2.Response(200, json=IDENTITIES[token])
+        if path.endswith("/holidays/925") and request.method == "GET":
+            return httpx2.Response(200, json=leave_payload(3 if approved else 2))
+        if path.endswith("/holidays/925/approve") and request.method == "POST":
+            approved = True
+            assert request.content == b'{"notrigger":0}'
+            return httpx2.Response(200, json=leave_payload(3))
+        raise AssertionError((request.method, path))
+
+    async with asgi_client(
+        settings,
+        httpx2.MockTransport(handler),
+        token="fake-token-A",
+    ) as client:
+        transport = streamable_http_client("http://localhost/mcp", http_client=client)
+        async with Client(transport, mode="legacy") as mcp_client:
+            preview = await mcp_client.call_tool(
+                "dolibarr_leave_request_approve",
+                {"request_id": 925},
+            )
+            assert preview.structured_content is not None
+            assert preview.structured_content["phase"] == "preview"
+            assert "balance" in preview.structured_content["warnings"][0]
+            confirmation_token = preview.structured_content["confirmation_token"]
+
+            rejected = await mcp_client.call_tool(
+                "dolibarr_leave_request_approve",
+                {
+                    "request_id": 925,
+                    "apply": True,
+                    "confirmation_token": "0" * 64,
+                },
+            )
+            assert rejected.is_error is True
+            assert approved is False
+
+            applied = await mcp_client.call_tool(
+                "dolibarr_leave_request_approve",
+                {
+                    "request_id": 925,
+                    "apply": True,
+                    "confirmation_token": confirmation_token,
+                },
+            )
+            assert applied.structured_content is not None
+            assert applied.structured_content["outcome"] == "applied"
+            assert applied.structured_content["leave_request"]["status"] == "approved"
+
+    write_calls = [
+        call for call in calls if call[0] == "POST" and call[1].endswith("/holidays/925/approve")
+    ]
+    assert write_calls == [("POST", "/dolibarr/api/index.php/holidays/925/approve", "fake-token-A")]
+    assert all(token == "fake-token-A" for _method, _path, token in calls)
+
+
+async def test_all_leave_tools_cross_real_auth_and_mcp_stack(
+    settings: Settings,
+) -> None:
+    calls: list[tuple[str, str]] = []
+
+    def leave_payload(request_id: int, status: int) -> dict[str, object]:
+        return {
+            "id": request_id,
+            "ref": f"LR-{request_id}",
+            "fk_user": 7,
+            "fk_validator": 1,
+            "fk_type": 2,
+            "date_debut": 1_786_665_600,
+            "date_fin": 1_786_665_600,
+            "halfday": 0,
+            "status": status,
+            "description": "Requested leave",
+        }
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        path = request.url.path
+        token = request.headers.get("DOLAPIKEY", "")
+        calls.append((path, token))
+        if path.endswith("/users/info"):
+            return httpx2.Response(200, json=IDENTITIES[token])
+        if path.endswith("/setup/dictionary/holiday_types"):
+            return httpx2.Response(
+                200,
+                json=[
+                    {
+                        "id": 2,
+                        "code": "UNPAID",
+                        "label": "Unpaid leave",
+                        "active": 1,
+                    }
+                ],
+            )
+        if path.endswith("/holidays"):
+            return httpx2.Response(200, json=[leave_payload(1, 1)])
+        statuses = {1: 1, 2: 2, 3: 3, 4: 4}
+        for request_id, status in statuses.items():
+            if path.endswith(f"/holidays/{request_id}"):
+                return httpx2.Response(200, json=leave_payload(request_id, status))
+        raise AssertionError((request.method, path))
+
+    async with asgi_client(
+        settings,
+        httpx2.MockTransport(handler),
+        token="fake-token-A",
+    ) as client:
+        transport = streamable_http_client("http://localhost/mcp", http_client=client)
+        async with Client(transport, mode="legacy") as mcp_client:
+            calls_to_make: list[tuple[str, dict[str, object]]] = [
+                ("dolibarr_leave_type_list", {}),
+                ("dolibarr_leave_request_search", {"employee_id": 7}),
+                ("dolibarr_leave_request_get", {"request_id": 1}),
+                (
+                    "dolibarr_leave_request_create",
+                    {
+                        "employee_id": 7,
+                        "leave_type_id": 2,
+                        "date_start": "2026-08-14",
+                        "date_end": "2026-08-14",
+                    },
+                ),
+                (
+                    "dolibarr_leave_request_update",
+                    {"request_id": 1, "description": "Updated"},
+                ),
+                ("dolibarr_leave_request_submit", {"request_id": 1}),
+                ("dolibarr_leave_request_approve", {"request_id": 2}),
+                (
+                    "dolibarr_leave_request_refuse",
+                    {"request_id": 2, "refusal_reason": "No capacity"},
+                ),
+                ("dolibarr_leave_request_cancel", {"request_id": 3}),
+                ("dolibarr_leave_request_reopen", {"request_id": 4}),
+            ]
+            results = [
+                await mcp_client.call_tool(tool_name, arguments)
+                for tool_name, arguments in calls_to_make
+            ]
+
+    assert results[0].structured_content is not None
+    assert results[0].structured_content["rows"][0]["code"] == "UNPAID"
+    assert results[1].structured_content is not None
+    assert results[1].structured_content["total_count"] == 1
+    assert results[2].structured_content is not None
+    assert results[2].structured_content["request_id"] == 1
+    for result in results[3:]:
+        assert result.structured_content is not None
+        assert result.structured_content["phase"] == "preview"
+        assert result.structured_content["apply"] is False
+    write_calls = [
+        path
+        for path, _token in calls
+        if path.endswith("/holidays") and path != "/dolibarr/api/index.php/holidays"
+    ]
+    assert write_calls == []
+    assert all(token == "fake-token-A" for _path, token in calls)
 
 
 @pytest.mark.parametrize(

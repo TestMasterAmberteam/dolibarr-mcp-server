@@ -22,6 +22,8 @@ from dolibarr_mcp.errors import (
     InvalidDolibarrResponseError,
 )
 from dolibarr_mcp.models import (
+    DolibarrLeaveRequestPayload,
+    DolibarrLeaveTypePayload,
     DolibarrProjectContactPayload,
     DolibarrProjectPayload,
     DolibarrTaskPayload,
@@ -46,10 +48,15 @@ _MAX_TASKS = 1000
 _MAX_USERS = 1000
 _MAX_TIME_LINES = 50_000
 _MAX_SALES_RECORDS = 10_000
+_MAX_LEAVE_REQUESTS = 10_000
+_MAX_LEAVE_TYPES = 1_000
 
 T = TypeVar("T")
 
 _IDENTITY_ADAPTER = TypeAdapter(DolibarrUserPayload)
+_LEAVE_ADAPTER = TypeAdapter(DolibarrLeaveRequestPayload)
+_LEAVE_LIST_ADAPTER = TypeAdapter(list[DolibarrLeaveRequestPayload])
+_LEAVE_TYPE_LIST_ADAPTER = TypeAdapter(list[DolibarrLeaveTypePayload])
 _PROJECT_ADAPTER = TypeAdapter(DolibarrProjectPayload)
 _PROJECT_LIST_ADAPTER = TypeAdapter(list[DolibarrProjectPayload])
 _PROJECT_CONTACT_LIST_ADAPTER = TypeAdapter(list[DolibarrProjectContactPayload])
@@ -228,6 +235,164 @@ class DolibarrClient:
             api_key,
             path=f"users/{user_id}",
             adapter=_IDENTITY_ADAPTER,
+        )
+
+    async def list_leave_types(self, api_key: str) -> list[DolibarrLeaveTypePayload]:
+        """Return active leave types through the fixed setup dictionary endpoint."""
+        rows: list[DolibarrLeaveTypePayload] = []
+        for page in range(_MAX_LEAVE_TYPES // _UPSTREAM_PAGE_SIZE):
+            current = await self._get_api(
+                api_key,
+                path="setup/dictionary/holiday_types",
+                params={
+                    "limit": _UPSTREAM_PAGE_SIZE,
+                    "page": page,
+                    "active": 1,
+                },
+                adapter=_LEAVE_TYPE_LIST_ADAPTER,
+            )
+            rows.extend(current)
+            if len(current) < _UPSTREAM_PAGE_SIZE:
+                return rows
+        raise DolibarrResultLimitError
+
+    async def list_leave_requests(
+        self,
+        api_key: str,
+        *,
+        employee_id: int | None = None,
+    ) -> list[DolibarrLeaveRequestPayload]:
+        """Return accessible leave requests within a fixed processing bound."""
+        rows: list[DolibarrLeaveRequestPayload] = []
+        properties = (
+            "id,ref,fk_user,fk_validator,fk_type,date_debut,date_fin,halfday,status,statut,"
+            "description,detail_refuse"
+        )
+        for page in range(_MAX_LEAVE_REQUESTS // _UPSTREAM_PAGE_SIZE):
+            params: dict[str, str | int] = {
+                "limit": _UPSTREAM_PAGE_SIZE,
+                "page": page,
+                "properties": properties,
+            }
+            if employee_id is not None:
+                params["user_ids"] = employee_id
+            current = await self._get_api(
+                api_key,
+                path="holidays",
+                params=params,
+                adapter=_LEAVE_LIST_ADAPTER,
+            )
+            rows.extend(current)
+            if len(current) < _UPSTREAM_PAGE_SIZE:
+                return rows
+        raise DolibarrResultLimitError
+
+    async def get_leave_request(
+        self,
+        api_key: str,
+        request_id: int,
+    ) -> DolibarrLeaveRequestPayload:
+        """Return one authorized leave request."""
+        return await self._get_api(
+            api_key,
+            path=f"holidays/{request_id}",
+            adapter=_LEAVE_ADAPTER,
+        )
+
+    async def create_leave_request(self, api_key: str, payload: dict[str, object]) -> int:
+        """Create one draft leave request through the fixed official endpoint."""
+        return await self._request_api(
+            api_key,
+            method="POST",
+            path="holidays",
+            json_body=payload,
+            adapter=_INTEGER_ADAPTER,
+        )
+
+    async def update_leave_request(
+        self,
+        api_key: str,
+        request_id: int,
+        payload: dict[str, object],
+    ) -> DolibarrLeaveRequestPayload:
+        """Apply one allowlisted partial update to a leave request."""
+        return await self._request_api(
+            api_key,
+            method="PUT",
+            path=f"holidays/{request_id}",
+            json_body=payload,
+            adapter=_LEAVE_ADAPTER,
+        )
+
+    async def submit_leave_request(
+        self,
+        api_key: str,
+        request_id: int,
+    ) -> DolibarrLeaveRequestPayload:
+        """Submit a draft leave request using Dolibarr's validate action."""
+        return await self._transition_leave_request(api_key, request_id, "validate")
+
+    async def approve_leave_request(
+        self,
+        api_key: str,
+        request_id: int,
+    ) -> DolibarrLeaveRequestPayload:
+        """Approve a submitted leave request."""
+        return await self._transition_leave_request(api_key, request_id, "approve")
+
+    async def cancel_leave_request(
+        self,
+        api_key: str,
+        request_id: int,
+    ) -> DolibarrLeaveRequestPayload:
+        """Cancel a submitted or approved leave request."""
+        return await self._transition_leave_request(api_key, request_id, "cancel")
+
+    async def refuse_leave_request(
+        self,
+        api_key: str,
+        request_id: int,
+        refusal_reason: str,
+    ) -> DolibarrLeaveRequestPayload:
+        """Refuse a submitted leave request with a bounded reason."""
+        return await self._transition_leave_request(
+            api_key,
+            request_id,
+            "refuse",
+            refusal_reason=refusal_reason,
+        )
+
+    async def reopen_leave_request(
+        self,
+        api_key: str,
+        request_id: int,
+    ) -> DolibarrLeaveRequestPayload:
+        """Reopen a canceled leave request to submitted state."""
+        return await self._transition_leave_request(api_key, request_id, "reopen")
+
+    async def _transition_leave_request(
+        self,
+        api_key: str,
+        request_id: int,
+        action: Literal["validate", "approve", "cancel", "refuse", "reopen"],
+        *,
+        refusal_reason: str | None = None,
+    ) -> DolibarrLeaveRequestPayload:
+        body: dict[str, object] = {"notrigger": 0}
+        if action == "refuse":
+            if refusal_reason is None:
+                message = "Refusal reason is required for the refuse action"
+                raise RuntimeError(message)
+            body["detail_refuse"] = refusal_reason
+        elif refusal_reason is not None:
+            message = "Refusal reason is allowed only for the refuse action"
+            raise RuntimeError(message)
+        return await self._request_api(
+            api_key,
+            method="POST",
+            path=f"holidays/{request_id}/{action}",
+            json_body=body,
+            adapter=_LEAVE_ADAPTER,
         )
 
     async def list_thirdparties(self, api_key: str) -> list[DolibarrThirdpartyPayload]:

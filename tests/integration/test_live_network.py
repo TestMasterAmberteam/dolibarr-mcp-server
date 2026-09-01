@@ -85,6 +85,16 @@ async def test_uvicorn_initialize_list_call_and_clean_shutdown(settings: Setting
             "dolibarr_lead_change_status",
             "dolibarr_lead_assign",
             "dolibarr_lead_open_project",
+            "dolibarr_leave_type_list",
+            "dolibarr_leave_request_search",
+            "dolibarr_leave_request_get",
+            "dolibarr_leave_request_create",
+            "dolibarr_leave_request_update",
+            "dolibarr_leave_request_submit",
+            "dolibarr_leave_request_approve",
+            "dolibarr_leave_request_refuse",
+            "dolibarr_leave_request_cancel",
+            "dolibarr_leave_request_reopen",
         ]
         assert result.structured_content == {
             "user_id": 88,

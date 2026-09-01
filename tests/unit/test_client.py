@@ -456,3 +456,167 @@ async def test_sales_list_bound_is_enforced(
             await client.list_thirdparties("key")
         with pytest.raises(DolibarrResultLimitError):
             await client.list_projects("key")
+
+
+async def test_leave_client_uses_only_fixed_api_routes_and_payloads(
+    settings: Settings,
+) -> None:
+    seen: list[httpx2.Request] = []
+
+    def leave_payload(status: int = 1) -> dict[str, object]:
+        return {
+            "id": 1,
+            "ref": "LR-1",
+            "fk_user": 7,
+            "fk_validator": 8,
+            "fk_type": 2,
+            "date_debut": 1_786_665_600,
+            "date_fin": 1_786_752_000,
+            "halfday": 0,
+            "status": status,
+        }
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        path = request.url.path
+        if path.endswith("/setup/dictionary/holiday_types"):
+            return httpx2.Response(
+                200,
+                json=[
+                    {
+                        "rowid": 2,
+                        "code": "PAID",
+                        "label": "Paid leave",
+                        "affect": 1,
+                    }
+                ],
+            )
+        if path.endswith("/holidays") and request.method == "GET":
+            return httpx2.Response(200, json=[leave_payload()])
+        if path.endswith("/holidays") and request.method == "POST":
+            return httpx2.Response(200, json="6")
+        if path.endswith("/holidays/1") and request.method == "GET":
+            return httpx2.Response(200, json=leave_payload())
+        if path.endswith("/holidays/1") and request.method == "PUT":
+            return httpx2.Response(200, json=leave_payload())
+        statuses = {
+            "validate": 2,
+            "approve": 3,
+            "cancel": 4,
+            "refuse": 5,
+            "reopen": 2,
+        }
+        for action, status in statuses.items():
+            if path.endswith(f"/holidays/1/{action}"):
+                return httpx2.Response(200, json=leave_payload(status))
+        raise AssertionError((request.method, path))
+
+    async with DolibarrClient(
+        settings,
+        transport=httpx2.MockTransport(handler),
+    ) as client:
+        leave_types = await client.list_leave_types("leave-key")
+        requests = await client.list_leave_requests("leave-key", employee_id=7)
+        request = await client.get_leave_request("leave-key", 1)
+        created = await client.create_leave_request(
+            "leave-key",
+            {
+                "fk_user": 7,
+                "fk_type": 2,
+                "date_debut": 1_786_665_600,
+                "date_fin": 1_786_752_000,
+                "halfday": 0,
+            },
+        )
+        updated = await client.update_leave_request(
+            "leave-key",
+            1,
+            {"description": "Updated"},
+        )
+        submitted = await client.submit_leave_request("leave-key", 1)
+        approved = await client.approve_leave_request("leave-key", 1)
+        canceled = await client.cancel_leave_request("leave-key", 1)
+        refused = await client.refuse_leave_request("leave-key", 1, "No capacity")
+        reopened = await client.reopen_leave_request("leave-key", 1)
+
+    assert leave_types[0].affects_balance is True
+    assert requests[0].employee_id == 7
+    assert request.request_id == 1
+    assert created == 6
+    assert updated.description is None
+    assert submitted.status_code == 2
+    assert approved.status_code == 3
+    assert canceled.status_code == 4
+    assert refused.status_code == 5
+    assert reopened.status_code == 2
+    assert all(request.headers["DOLAPIKEY"] == "leave-key" for request in seen)
+    assert all("Authorization" not in request.headers for request in seen)
+    assert all("sqlfilters" not in request.url.params for request in seen)
+    list_request = next(
+        request
+        for request in seen
+        if request.method == "GET" and request.url.path.endswith("/holidays")
+    )
+    assert list_request.url.params["user_ids"] == "7"
+    assert "status,statut" in list_request.url.params["properties"]
+    transition_requests = [
+        request
+        for request in seen
+        if request.method == "POST" and "/holidays/1/" in request.url.path
+    ]
+    assert [request.url.path.rsplit("/", 1)[-1] for request in transition_requests] == [
+        "validate",
+        "approve",
+        "cancel",
+        "refuse",
+        "reopen",
+    ]
+    assert transition_requests[0].content == b'{"notrigger":0}'
+    assert transition_requests[3].content == (b'{"notrigger":0,"detail_refuse":"No capacity"}')
+
+
+async def test_leave_client_transition_guards_and_bounds(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(client_module, "_MAX_LEAVE_REQUESTS", 100)
+    monkeypatch.setattr(client_module, "_MAX_LEAVE_TYPES", 100)
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if request.url.path.endswith("/holiday_types"):
+            return httpx2.Response(
+                200,
+                json=[
+                    {"id": index + 1, "code": f"T{index}", "label": f"Type {index}"}
+                    for index in range(100)
+                ],
+            )
+        return httpx2.Response(
+            200,
+            json=[
+                {
+                    "id": index + 1,
+                    "fk_user": 7,
+                    "fk_type": 2,
+                    "date_debut": 1_786_665_600,
+                    "date_fin": 1_786_752_000,
+                    "status": 1,
+                }
+                for index in range(100)
+            ],
+        )
+
+    async with DolibarrClient(settings, transport=httpx2.MockTransport(handler)) as client:
+        with pytest.raises(DolibarrResultLimitError):
+            await client.list_leave_types("key")
+        with pytest.raises(DolibarrResultLimitError):
+            await client.list_leave_requests("key")
+        with pytest.raises(RuntimeError):
+            await client._transition_leave_request("key", 1, "refuse")
+        with pytest.raises(RuntimeError):
+            await client._transition_leave_request(
+                "key",
+                1,
+                "validate",
+                refusal_reason="not allowed",
+            )

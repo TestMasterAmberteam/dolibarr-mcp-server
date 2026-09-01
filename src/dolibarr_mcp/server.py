@@ -1,4 +1,4 @@
-"""MCP server definition containing allowlisted reporting and sales tools."""
+"""MCP server definition containing allowlisted reporting, sales, and leave tools."""
 
 from __future__ import annotations
 
@@ -11,12 +11,20 @@ from mcp.types import ToolAnnotations
 from pydantic import Field, ValidationError
 
 from dolibarr_mcp.credentials import get_request_api_key
+from dolibarr_mcp.leave_requests import LeaveRequestService
 from dolibarr_mcp.models import (
     CustomerStatus,
     LeadCreateInput,
     LeadDetail,
     LeadSearchResult,
     LeadUpdateInput,
+    LeaveHalfDayMode,
+    LeaveRequestCreateInput,
+    LeaveRequestDetail,
+    LeaveRequestSearchResult,
+    LeaveRequestStatus,
+    LeaveRequestUpdateInput,
+    LeaveTypeListResult,
     MutationPreview,
     MutationResponse,
     MutationResult,
@@ -47,6 +55,7 @@ QueryText = Annotated[str, Field(min_length=1, max_length=255)]
 ShortText = Annotated[str, Field(min_length=1, max_length=255)]
 OptionalText = Annotated[str, Field(max_length=1000)]
 NoteText = Annotated[str, Field(max_length=4000)]
+RequiredNote = Annotated[str, Field(min_length=1, max_length=4000)]
 CountryCode = Annotated[str, Field(min_length=2, max_length=3)]
 EmailText = Annotated[str, Field(max_length=320)]
 PhoneText = Annotated[str, Field(max_length=64)]
@@ -102,10 +111,11 @@ def create_mcp_server(client: DolibarrClient) -> MCPServer[None]:
     server: MCPServer[None] = MCPServer(
         name="dolibarr-mcp-server",
         description="Stateless, per-user access to Dolibarr ERP.",
-        version="0.2.0",
+        version="0.3.0",
     )
     reporting = TimeReportingService(client)
     sales = SalesService(client)
+    leave_requests = LeaveRequestService(client)
 
     @server.tool(
         name="dolibarr_whoami",
@@ -581,6 +591,242 @@ def create_mcp_server(client: DolibarrClient) -> MCPServer[None]:
             await sales.lead_open_project(
                 get_request_api_key(),
                 project_id,
+                apply=apply,
+                confirmation_token=confirmation_token,
+            )
+        )
+
+    @server.tool(
+        name="dolibarr_leave_type_list",
+        description="List active Dolibarr leave types available for new requests.",
+        annotations=_READ_ONLY_ANNOTATIONS,
+    )
+    async def dolibarr_leave_type_list() -> LeaveTypeListResult:
+        return await leave_requests.leave_type_list(get_request_api_key())
+
+    @server.tool(
+        name="dolibarr_leave_request_search",
+        description=(
+            "Search accessible leave requests using fixed employee, status, and date filters."
+        ),
+        annotations=_READ_ONLY_ANNOTATIONS,
+    )
+    async def dolibarr_leave_request_search(
+        *,
+        employee_id: PositiveIdentifier | None = None,
+        status: LeaveRequestStatus | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        offset: ResultOffset = 0,
+        limit: OutputLimit = 200,
+    ) -> LeaveRequestSearchResult:
+        return await leave_requests.search(
+            get_request_api_key(),
+            employee_id=employee_id,
+            status=status,
+            date_from=date_from,
+            date_to=date_to,
+            offset=offset,
+            limit=limit,
+        )
+
+    @server.tool(
+        name="dolibarr_leave_request_get",
+        description="Return allowlisted details for one accessible Dolibarr leave request.",
+        annotations=_READ_ONLY_ANNOTATIONS,
+    )
+    async def dolibarr_leave_request_get(
+        request_id: PositiveIdentifier,
+    ) -> LeaveRequestDetail:
+        return await leave_requests.get(get_request_api_key(), request_id)
+
+    @server.tool(
+        name="dolibarr_leave_request_create",
+        description=(
+            "Preview or explicitly confirm creation of a draft leave request. "
+            "Dolibarr remains authoritative for balance, overlap, approver, and permissions."
+        ),
+        annotations=_CREATE_ANNOTATIONS,
+    )
+    async def dolibarr_leave_request_create(
+        employee_id: PositiveIdentifier,
+        leave_type_id: PositiveIdentifier,
+        date_start: date,
+        date_end: date,
+        *,
+        half_day_mode: LeaveHalfDayMode = "full_days",
+        approver_user_id: PositiveIdentifier | None = None,
+        description: NoteText | None = None,
+        apply: bool = False,
+        confirmation_token: ConfirmationToken | None = None,
+    ) -> MutationResponse:
+        data = LeaveRequestCreateInput(
+            employee_id=employee_id,
+            leave_type_id=leave_type_id,
+            date_start=date_start,
+            date_end=date_end,
+            half_day_mode=half_day_mode,
+            approver_user_id=approver_user_id,
+            description=description,
+        )
+        return _mutation_response(
+            await leave_requests.create(
+                get_request_api_key(),
+                data,
+                apply=apply,
+                confirmation_token=confirmation_token,
+            )
+        )
+
+    @server.tool(
+        name="dolibarr_leave_request_update",
+        description=(
+            "Preview or explicitly confirm an allowlisted update to a draft leave request."
+        ),
+        annotations=_MUTATION_ANNOTATIONS,
+    )
+    async def dolibarr_leave_request_update(
+        request_id: PositiveIdentifier,
+        *,
+        employee_id: PositiveIdentifier | None = None,
+        leave_type_id: PositiveIdentifier | None = None,
+        date_start: date | None = None,
+        date_end: date | None = None,
+        half_day_mode: LeaveHalfDayMode | None = None,
+        approver_user_id: PositiveIdentifier | None = None,
+        description: NoteText | None = None,
+        apply: bool = False,
+        confirmation_token: ConfirmationToken | None = None,
+    ) -> MutationResponse:
+        data = LeaveRequestUpdateInput.model_validate(
+            _defined(
+                employee_id=employee_id,
+                leave_type_id=leave_type_id,
+                date_start=date_start,
+                date_end=date_end,
+                half_day_mode=half_day_mode,
+                approver_user_id=approver_user_id,
+                description=description,
+            )
+        )
+        return _mutation_response(
+            await leave_requests.update(
+                get_request_api_key(),
+                request_id,
+                data,
+                apply=apply,
+                confirmation_token=confirmation_token,
+            )
+        )
+
+    @server.tool(
+        name="dolibarr_leave_request_submit",
+        description=(
+            "Preview or explicitly confirm submission of a draft leave request for approval."
+        ),
+        annotations=_MUTATION_ANNOTATIONS,
+    )
+    async def dolibarr_leave_request_submit(
+        request_id: PositiveIdentifier,
+        *,
+        apply: bool = False,
+        confirmation_token: ConfirmationToken | None = None,
+    ) -> MutationResponse:
+        return _mutation_response(
+            await leave_requests.submit(
+                get_request_api_key(),
+                request_id,
+                apply=apply,
+                confirmation_token=confirmation_token,
+            )
+        )
+
+    @server.tool(
+        name="dolibarr_leave_request_approve",
+        description=(
+            "Preview or explicitly confirm approval of a submitted leave request. "
+            "The preview warns that Dolibarr's balance and policy checks remain authoritative."
+        ),
+        annotations=_MUTATION_ANNOTATIONS,
+    )
+    async def dolibarr_leave_request_approve(
+        request_id: PositiveIdentifier,
+        *,
+        apply: bool = False,
+        confirmation_token: ConfirmationToken | None = None,
+    ) -> MutationResponse:
+        return _mutation_response(
+            await leave_requests.approve(
+                get_request_api_key(),
+                request_id,
+                apply=apply,
+                confirmation_token=confirmation_token,
+            )
+        )
+
+    @server.tool(
+        name="dolibarr_leave_request_refuse",
+        description=(
+            "Preview or explicitly confirm refusal of a submitted leave request with a reason."
+        ),
+        annotations=_MUTATION_ANNOTATIONS,
+    )
+    async def dolibarr_leave_request_refuse(
+        request_id: PositiveIdentifier,
+        refusal_reason: RequiredNote,
+        *,
+        apply: bool = False,
+        confirmation_token: ConfirmationToken | None = None,
+    ) -> MutationResponse:
+        return _mutation_response(
+            await leave_requests.refuse(
+                get_request_api_key(),
+                request_id,
+                refusal_reason,
+                apply=apply,
+                confirmation_token=confirmation_token,
+            )
+        )
+
+    @server.tool(
+        name="dolibarr_leave_request_cancel",
+        description=(
+            "Preview or explicitly confirm cancellation of a submitted or approved leave request."
+        ),
+        annotations=_MUTATION_ANNOTATIONS,
+    )
+    async def dolibarr_leave_request_cancel(
+        request_id: PositiveIdentifier,
+        *,
+        apply: bool = False,
+        confirmation_token: ConfirmationToken | None = None,
+    ) -> MutationResponse:
+        return _mutation_response(
+            await leave_requests.cancel(
+                get_request_api_key(),
+                request_id,
+                apply=apply,
+                confirmation_token=confirmation_token,
+            )
+        )
+
+    @server.tool(
+        name="dolibarr_leave_request_reopen",
+        description=(
+            "Preview or explicitly confirm reopening a canceled leave request to submitted state."
+        ),
+        annotations=_MUTATION_ANNOTATIONS,
+    )
+    async def dolibarr_leave_request_reopen(
+        request_id: PositiveIdentifier,
+        *,
+        apply: bool = False,
+        confirmation_token: ConfirmationToken | None = None,
+    ) -> MutationResponse:
+        return _mutation_response(
+            await leave_requests.reopen(
+                get_request_api_key(),
+                request_id,
                 apply=apply,
                 confirmation_token=confirmation_token,
             )

@@ -18,6 +18,11 @@ All notable changes to this project are documented here. The format follows
 - Separate opportunity-stage, project validate/reopen, and `PROJECTLEADER` assignment operations.
 - Stateless preview tokens with stale-state checks, duplicate warnings, and explicit partial-write
   results (ADR 0003).
+- Read-only leave-type, leave-request search, and leave-request detail tools.
+- Confirmed create, draft update, submit, approve, refuse, cancel, and reopen tools using
+  Dolibarr's fixed official Holidays API endpoints.
+- Closed status transitions, half-day normalization, balance warnings, stale-state checks, and
+  refreshed partial results for unexpected transition outcomes (ADR 0004).
 
 ### Fixed
 
@@ -28,6 +33,9 @@ All notable changes to this project are documented here. The format follows
 - Raised the development test runner to `pytest>=9.0.3` to exclude `PYSEC-2026-1845`.
 - Kept sales access API-only with fixed methods, paths, and payload allowlists; no database,
   `sqlfilters`, credentials, headers, or arbitrary upstream paths are exposed to tools.
+- Kept leave access API-only with fixed routes, typed projections, local filters, and dedicated
+  action endpoints; no database, browser automation, delete, balance override, or arbitrary
+  `sqlfilters` is exposed.
 
 ## [0.1.0] - 2026-08-19
 

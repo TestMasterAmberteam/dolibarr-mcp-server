@@ -92,6 +92,20 @@ class SalesConfirmationError(DolibarrError):
     public_message = "Sales operation preview is missing or stale."
 
 
+class LeaveRequestError(DolibarrError):
+    """A leave-request operation is inconsistent with the current workflow state."""
+
+    status_code = 422
+    public_message = "Invalid leave-request operation parameters or state."
+
+
+class LeaveConfirmationError(DolibarrError):
+    """A leave-request preview token is missing or stale."""
+
+    status_code = 409
+    public_message = "Leave-request operation preview is missing or stale."
+
+
 class ReportRequestError(DolibarrError):
     """A report request is internally inconsistent after schema validation."""
 
