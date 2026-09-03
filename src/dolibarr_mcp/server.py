@@ -17,6 +17,7 @@ from dolibarr_mcp.models import (
     LeadCreateInput,
     LeadDetail,
     LeadSearchResult,
+    LeadStageListResult,
     LeadUpdateInput,
     LeaveHalfDayMode,
     LeaveRequestCreateInput,
@@ -46,7 +47,10 @@ from dolibarr_mcp.reporting import MAX_OUTPUT_ROWS, TimeReportingService
 from dolibarr_mcp.sales import SalesService
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from dolibarr_mcp.client import DolibarrClient
+    from dolibarr_mcp.config import LeadStageConfig
 
 PositiveIdentifier = Annotated[int, Field(gt=0)]
 OutputLimit = Annotated[int, Field(ge=1, le=MAX_OUTPUT_ROWS)]
@@ -63,6 +67,10 @@ VatText = Annotated[str, Field(max_length=64)]
 Amount = Annotated[float, Field(ge=0)]
 Probability = Annotated[float, Field(ge=0, le=100)]
 ConfirmationToken = Annotated[str, Field(min_length=64, max_length=64)]
+StageCode = Annotated[
+    str,
+    Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"),
+]
 
 _READ_ONLY_ANNOTATIONS = ToolAnnotations(
     readOnlyHint=True,
@@ -106,15 +114,19 @@ def _current_identity() -> VerifiedIdentity:
         raise PermissionError(message) from None
 
 
-def create_mcp_server(client: DolibarrClient) -> MCPServer[None]:
+def create_mcp_server(
+    client: DolibarrClient,
+    *,
+    lead_stage_catalog: Mapping[str, LeadStageConfig] | None = None,
+) -> MCPServer[None]:
     """Build the shared MCP protocol server and stateless domain services."""
     server: MCPServer[None] = MCPServer(
         name="dolibarr-mcp-server",
         description="Stateless, per-user access to Dolibarr ERP.",
-        version="0.3.0",
+        version="0.4.0",
     )
     reporting = TimeReportingService(client)
-    sales = SalesService(client)
+    sales = SalesService(client, lead_stage_catalog=lead_stage_catalog)
     leave_requests = LeaveRequestService(client)
 
     @server.tool(
@@ -427,6 +439,20 @@ def create_mcp_server(client: DolibarrClient) -> MCPServer[None]:
         )
 
     @server.tool(
+        name="dolibarr_lead_stage_list",
+        description=(
+            "List operator-configured and observed opportunity-stage ID/code pairs. "
+            "The result explicitly reports that it is not a complete Dolibarr dictionary."
+        ),
+        annotations=_READ_ONLY_ANNOTATIONS,
+    )
+    async def dolibarr_lead_stage_list(
+        *,
+        query: QueryText | None = None,
+    ) -> LeadStageListResult:
+        return await sales.lead_stage_list(get_request_api_key(), query=query)
+
+    @server.tool(
         name="dolibarr_lead_get",
         description="Return allowlisted details for one project marked as a Dolibarr lead.",
         annotations=_READ_ONLY_ANNOTATIONS,
@@ -527,14 +553,18 @@ def create_mcp_server(client: DolibarrClient) -> MCPServer[None]:
     @server.tool(
         name="dolibarr_lead_change_status",
         description=(
-            "Preview or explicitly confirm changing only a lead's sales-stage identifier."
+            "Preview or explicitly confirm changing only a lead's sales stage. Supply exactly "
+            "one of stage_id or stage_code; configured canonical codes and aliases resolve first, "
+            "inactive configured stages are rejected, and otherwise codes resolve from "
+            "unambiguous stages observed on accessible leads."
         ),
         annotations=_MUTATION_ANNOTATIONS,
     )
     async def dolibarr_lead_change_status(
         project_id: PositiveIdentifier,
-        stage_id: PositiveIdentifier,
         *,
+        stage_id: PositiveIdentifier | None = None,
+        stage_code: StageCode | None = None,
         apply: bool = False,
         confirmation_token: ConfirmationToken | None = None,
     ) -> MutationResponse:
@@ -542,7 +572,8 @@ def create_mcp_server(client: DolibarrClient) -> MCPServer[None]:
             await sales.lead_change_status(
                 get_request_api_key(),
                 project_id,
-                stage_id,
+                stage_id=stage_id,
+                stage_code=stage_code,
                 apply=apply,
                 confirmation_token=confirmation_token,
             )
@@ -589,6 +620,30 @@ def create_mcp_server(client: DolibarrClient) -> MCPServer[None]:
     ) -> MutationResponse:
         return _mutation_response(
             await sales.lead_open_project(
+                get_request_api_key(),
+                project_id,
+                apply=apply,
+                confirmation_token=confirmation_token,
+            )
+        )
+
+    @server.tool(
+        name="dolibarr_lead_close_project",
+        description=(
+            "Preview or explicitly confirm setting an open lead project's lifecycle state to "
+            "closed through Dolibarr's fixed project update endpoint. The response warns that "
+            "Dolibarr 23.0.3 does not expose trigger-equivalent close semantics through REST."
+        ),
+        annotations=_MUTATION_ANNOTATIONS,
+    )
+    async def dolibarr_lead_close_project(
+        project_id: PositiveIdentifier,
+        *,
+        apply: bool = False,
+        confirmation_token: ConfirmationToken | None = None,
+    ) -> MutationResponse:
+        return _mutation_response(
+            await sales.lead_close_project(
                 get_request_api_key(),
                 project_id,
                 apply=apply,

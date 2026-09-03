@@ -2,14 +2,9 @@ services:
   dolibarr-mcp:
     build:
       context: .
-    image: dolibarr-mcp-server:0.3.0
-    environment:
-      DOLIBARR_BASE_URL: ${DOLIBARR_BASE_URL:?Set DOLIBARR_BASE_URL to your Dolibarr HTTPS URL}
-      HOST: 0.0.0.0
-      PORT: 8000
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-localhost:8000,127.0.0.1:8000}
-      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
+    image: dolibarr-mcp-server:0.4.0
+    volumes:
+      - ./config.toml:/app/config.toml:ro
     ports:
       - "8000:8000"
     read_only: true

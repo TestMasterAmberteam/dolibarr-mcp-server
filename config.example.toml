@@ -1,0 +1,35 @@
+# Non-secret server configuration. Copy this file to config.toml.
+dolibarr_base_url = "https://erp.example.invalid/dolibarr"
+# dolibarr_ca_bundle = "/run/secrets/private-ca.pem"
+
+host = "127.0.0.1"
+port = 8000
+log_level = "INFO"
+
+mcp_allowed_hosts = [
+  "127.0.0.1",
+  "127.0.0.1:*",
+  "localhost",
+  "localhost:*",
+  "[::1]",
+  "[::1]:*",
+]
+mcp_allowed_origins = []
+
+dolibarr_connect_timeout = 5
+dolibarr_read_timeout = 10
+dolibarr_write_timeout = 10
+dolibarr_pool_timeout = 5
+dolibarr_max_connections = 100
+dolibarr_max_keepalive_connections = 20
+allow_insecure_localhost = false
+
+# Verify every installation-specific value in Dolibarr before enabling a stage.
+# The table key is the canonical Dolibarr code; aliases are accepted as tool input.
+# [dolibarr_lead_stage_catalog.LOST]
+# id = 7
+# label = "P3L - Lost"
+# aliases = ["P3L"]
+# percent = 0
+# position = 70
+# active = true

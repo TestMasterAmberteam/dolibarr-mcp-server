@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dolibarr-mcp-server"
-version = "0.3.0"
+version = "0.4.0"
 description = "Stateless MCP server for per-user Dolibarr API access"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -26,7 +26,6 @@ dependencies = [
   "httpx2>=2.9,<3",
   "mcp>=2.0,<3",
   "pydantic>=2.12,<3",
-  "pydantic-settings>=2.14,<3",
   "starlette>=1.4.1,<2",
   "uvicorn>=0.35,<1",
 ]

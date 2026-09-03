@@ -13,7 +13,7 @@ uv run pytest
 ```
 
 Automated tests use a mock Dolibarr. Do not use production credentials, paste headers into an issue,
-or add API keys to `.env.example`, fixtures, snapshots, recordings, commits, or CI secrets.
+add API keys to `config.toml`, fixtures, snapshots, or recordings, or commit a local `.env` file.
 
 ## Changes and commits
 

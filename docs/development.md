@@ -7,8 +7,10 @@ uv sync --locked --all-groups
 uv run pre-commit install
 ```
 
-Copy `.env.example` to `.env` only for local execution. Use a fictitious or isolated Dolibarr test
-account; the automated suite uses mock transports and requires no Internet or real key.
+Copy `config.example.toml` to the ignored `config.toml` for local execution. Keep only non-secret
+application settings there. The server does not load `.env` or application configuration from
+environment variables. Use a fictitious or isolated Dolibarr test account; the automated suite
+uses mock transports and requires no Internet or real key.
 
 ## Required local gates
 

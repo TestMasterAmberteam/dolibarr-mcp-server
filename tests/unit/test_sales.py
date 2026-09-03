@@ -10,10 +10,14 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from pydantic import ValidationError
 
+from dolibarr_mcp.config import LeadStageConfig
 from dolibarr_mcp.errors import (
     DolibarrNotFoundError,
     DolibarrUnavailableError,
     SalesConfirmationError,
+    SalesInactiveStageError,
+    SalesRequestError,
+    SalesStageResolutionError,
 )
 from dolibarr_mcp.models import (
     DolibarrProjectContactPayload,
@@ -67,6 +71,7 @@ def project(
     lead: bool = True,
     thirdparty_id: int = 1,
     stage_id: int = 4,
+    stage_code: str = "NEW",
     status: int = 0,
 ) -> DolibarrProjectPayload:
     return DolibarrProjectPayload.model_validate(
@@ -77,7 +82,7 @@ def project(
             "socid": thirdparty_id,
             "usage_opportunity": int(lead),
             "fk_opp_status": stage_id,
-            "opp_status_code": "NEW",
+            "opp_status_code": stage_code,
             "status": status,
             "opp_amount": 1000,
             "opp_percent": 25,
@@ -87,6 +92,25 @@ def project(
             "note_public": "public",
             "note_private": "private",
         }
+    )
+
+
+def stage_config(
+    stage_id: int,
+    *,
+    label: str = "P3L - Lost",
+    aliases: list[str] | None = None,
+    percent: float = 0,
+    position: int = 70,
+    active: bool = True,
+) -> LeadStageConfig:
+    return LeadStageConfig(
+        id=stage_id,
+        label=label,
+        aliases=aliases or [],
+        percent=percent,
+        position=position,
+        active=active,
     )
 
 
@@ -133,7 +157,7 @@ class FakeSalesClient:
         self.projects = {
             10: project(10, "Acme Renewal"),
             11: project(11, "Ordinary Project", lead=False),
-            12: project(12, "Closed Lead", status=2, stage_id=7),
+            12: project(12, "Closed Lead", status=2, stage_id=7, stage_code="LOST"),
         }
         self.users = {
             7: user(7, "alice"),
@@ -149,6 +173,8 @@ class FakeSalesClient:
         self.fail_add = False
         self.fail_delete_user_id: int | None = None
         self.validate_no_effect = False
+        self.close_no_effect = False
+        self.stage_no_effect = False
 
     async def list_thirdparties(self, api_key: str) -> list[DolibarrThirdpartyPayload]:
         return list(self.thirdparties.values())
@@ -209,6 +235,12 @@ class FakeSalesClient:
     async def list_projects(self, api_key: str) -> list[DolibarrProjectPayload]:
         return list(self.projects.values())
 
+    async def list_lead_stage_observations(
+        self,
+        api_key: str,
+    ) -> list[DolibarrProjectPayload]:
+        return list(self.projects.values())
+
     async def get_project(self, api_key: str, project_id: int) -> DolibarrProjectPayload:
         try:
             return self.projects[project_id]
@@ -244,6 +276,8 @@ class FakeSalesClient:
             "fk_opp_status": "stage_id",
         }
         updates = {mapping[key]: value for key, value in payload.items()}
+        if self.stage_no_effect:
+            updates.pop("stage_id", None)
         result = self.projects[project_id].model_copy(update=updates)
         self.projects[project_id] = result
         return result
@@ -252,6 +286,12 @@ class FakeSalesClient:
         self.calls.append(("validate_project", project_id))
         if not self.validate_no_effect:
             self.projects[project_id] = self.projects[project_id].model_copy(update={"status": 1})
+
+    async def close_project(self, api_key: str, project_id: int) -> DolibarrProjectPayload:
+        self.calls.append(("close_project", project_id))
+        if not self.close_no_effect:
+            self.projects[project_id] = self.projects[project_id].model_copy(update={"status": 2})
+        return self.projects[project_id]
 
     async def get_project_contacts(
         self,
@@ -286,8 +326,14 @@ class FakeSalesClient:
         ]
 
 
-def service(fake: FakeSalesClient) -> SalesService:
-    return SalesService(cast("DolibarrClient", fake))
+def service(
+    fake: FakeSalesClient,
+    lead_stage_catalog: dict[str, LeadStageConfig] | None = None,
+) -> SalesService:
+    return SalesService(
+        cast("DolibarrClient", fake),
+        lead_stage_catalog=lead_stage_catalog,
+    )
 
 
 async def test_thirdparty_search_get_and_user_search_are_allowlisted() -> None:
@@ -377,6 +423,46 @@ async def test_lead_search_uses_usage_flag_and_fixed_filters() -> None:
 
     with pytest.raises(DolibarrNotFoundError):
         await sales.lead_get("key", 11)
+
+
+async def test_lead_stage_list_returns_observed_codes_and_is_explicitly_incomplete() -> None:
+    fake = FakeSalesClient()
+    fake.projects[13] = project(13, "Second P3L", stage_id=7, stage_code="LOST")
+    sales = service(fake)
+
+    result = await sales.lead_stage_list("key", query="lost")
+
+    assert result.complete is False
+    assert result.source == "operator_catalog_and_accessible_leads"
+    assert result.count == 1
+    assert result.rows[0].stage_id == 7
+    assert result.rows[0].stage_code == "LOST"
+    assert result.rows[0].configured is False
+    assert result.rows[0].observed_lead_count == 2
+    assert "no complete" in result.warnings[0].casefold()
+
+    by_identifier = await sales.lead_stage_list("key", query="4")
+    assert [row.stage_id for row in by_identifier.rows] == [4]
+
+
+async def test_lead_stage_list_includes_operator_catalog_entry() -> None:
+    fake = FakeSalesClient()
+    sales = service(fake, {"LOST": stage_config(17, aliases=["P3L"])})
+
+    result = await sales.lead_stage_list("key", query="p3l")
+
+    assert result.count == 1
+    assert result.rows[0].stage_id == 17
+    assert result.rows[0].stage_code == "LOST"
+    assert result.rows[0].label == "P3L - Lost"
+    assert result.rows[0].aliases == ["P3L"]
+    assert result.rows[0].probability_percent == 0
+    assert result.rows[0].position == 70
+    assert result.rows[0].active is True
+    assert result.rows[0].configured is True
+    assert result.rows[0].observed_lead_count == 0
+    assert "conflicts" in " ".join(result.warnings)
+    assert "operator-supplied" in result.warnings[-1]
 
 
 async def test_thirdparty_create_requires_matching_preview_and_maps_fields() -> None:
@@ -527,13 +613,19 @@ async def test_lead_update_and_stage_change_are_separate() -> None:
     assert noop_update_result.outcome == "no_op"
 
     stage_preview = await sales.lead_change_status(
-        "key", 10, 7, apply=False, confirmation_token=None
+        "key",
+        10,
+        stage_id=7,
+        stage_code=None,
+        apply=False,
+        confirmation_token=None,
     )
     assert isinstance(stage_preview, MutationPreview)
     stage_result = await sales.lead_change_status(
         "key",
         10,
-        7,
+        stage_id=7,
+        stage_code=None,
         apply=True,
         confirmation_token=stage_preview.confirmation_token,
     )
@@ -542,18 +634,157 @@ async def test_lead_update_and_stage_change_are_separate() -> None:
     assert stage_result.lead.stage_id == 7
 
     noop_preview = await sales.lead_change_status(
-        "key", 10, 7, apply=False, confirmation_token=None
+        "key",
+        10,
+        stage_id=7,
+        stage_code=None,
+        apply=False,
+        confirmation_token=None,
     )
     assert isinstance(noop_preview, MutationPreview)
     noop = await sales.lead_change_status(
         "key",
         10,
-        7,
+        stage_id=7,
+        stage_code=None,
         apply=True,
         confirmation_token=noop_preview.confirmation_token,
     )
     assert isinstance(noop, MutationResult)
     assert noop.outcome == "no_op"
+
+
+async def test_lead_change_status_resolves_configured_or_observed_code() -> None:
+    fake = FakeSalesClient()
+    configured_sales = service(fake, {"LOST": stage_config(17, aliases=["P3L"])})
+
+    preview = await configured_sales.lead_change_status(
+        "key",
+        10,
+        stage_id=None,
+        stage_code="p3l",
+        apply=False,
+        confirmation_token=None,
+    )
+    assert isinstance(preview, MutationPreview)
+    assert preview.changes[0].field == "stage_id"
+    assert preview.changes[0].after == 17
+    assert "operator-supplied" in preview.warnings[0]
+
+    applied = await configured_sales.lead_change_status(
+        "key",
+        10,
+        stage_id=None,
+        stage_code="p3l",
+        apply=True,
+        confirmation_token=preview.confirmation_token,
+    )
+    assert isinstance(applied, MutationResult)
+    assert applied.lead is not None
+    assert applied.lead.stage_id == 17
+    assert ("update_project", {"fk_opp_status": 17}) in fake.calls
+
+    observed_sales = service(FakeSalesClient())
+    observed = await observed_sales.lead_change_status(
+        "key",
+        10,
+        stage_id=None,
+        stage_code="LOST",
+        apply=False,
+        confirmation_token=None,
+    )
+    assert isinstance(observed, MutationPreview)
+    assert observed.changes[0].after == 7
+
+    fake.projects[10] = fake.projects[10].model_copy(update={"stage_id": 4})
+    fake.stage_no_effect = True
+    partial_preview = await configured_sales.lead_change_status(
+        "key",
+        10,
+        stage_id=None,
+        stage_code="P3L",
+        apply=False,
+        confirmation_token=None,
+    )
+    assert isinstance(partial_preview, MutationPreview)
+    partial = await configured_sales.lead_change_status(
+        "key",
+        10,
+        stage_id=None,
+        stage_code="P3L",
+        apply=True,
+        confirmation_token=partial_preview.confirmation_token,
+    )
+    assert isinstance(partial, MutationResult)
+    assert partial.outcome == "partial"
+    assert partial.partial_errors
+
+
+async def test_lead_change_status_rejects_configured_inactive_stage() -> None:
+    sales = service(
+        FakeSalesClient(),
+        {
+            "NEGO": stage_config(
+                4,
+                label="Negotiation",
+                percent=60,
+                position=40,
+                active=False,
+            )
+        },
+    )
+
+    with pytest.raises(SalesInactiveStageError):
+        await sales.lead_change_status(
+            "key",
+            10,
+            stage_id=None,
+            stage_code="NEGO",
+            apply=False,
+            confirmation_token=None,
+        )
+    with pytest.raises(SalesInactiveStageError):
+        await sales.lead_change_status(
+            "key",
+            10,
+            stage_id=4,
+            stage_code=None,
+            apply=False,
+            confirmation_token=None,
+        )
+
+
+async def test_lead_change_status_requires_one_resolvable_stage_selector() -> None:
+    sales = service(FakeSalesClient())
+
+    with pytest.raises(SalesRequestError):
+        await sales.lead_change_status(
+            "key",
+            10,
+            stage_id=None,
+            stage_code=None,
+            apply=False,
+            confirmation_token=None,
+        )
+    with pytest.raises(SalesRequestError):
+        await sales.lead_change_status(
+            "key",
+            10,
+            stage_id=7,
+            stage_code="P3L",
+            apply=False,
+            confirmation_token=None,
+        )
+    with pytest.raises(SalesStageResolutionError) as exc_info:
+        await sales.lead_change_status(
+            "key",
+            10,
+            stage_id=None,
+            stage_code="UNKNOWN",
+            apply=False,
+            confirmation_token=None,
+        )
+    assert "not uniquely resolvable" in str(exc_info.value)
 
 
 async def test_open_project_uses_validate_and_reports_noop_or_partial() -> None:
@@ -590,6 +821,58 @@ async def test_open_project_uses_validate_and_reports_noop_or_partial() -> None:
         12,
         apply=True,
         confirmation_token=closed_preview.confirmation_token,
+    )
+    assert isinstance(partial, MutationResult)
+    assert partial.outcome == "partial"
+    assert partial.partial_errors
+
+
+async def test_close_project_requires_open_state_and_reports_noop_or_partial() -> None:
+    fake = FakeSalesClient()
+    sales = service(fake)
+
+    with pytest.raises(SalesRequestError):
+        await sales.lead_close_project("key", 10, apply=False, confirmation_token=None)
+
+    fake.projects[10] = fake.projects[10].model_copy(update={"status": 1})
+    preview = await sales.lead_close_project("key", 10, apply=False, confirmation_token=None)
+    assert isinstance(preview, MutationPreview)
+    assert "PROJECT_CLOSE" in preview.warnings[0]
+
+    applied = await sales.lead_close_project(
+        "key",
+        10,
+        apply=True,
+        confirmation_token=preview.confirmation_token,
+    )
+    assert isinstance(applied, MutationResult)
+    assert applied.outcome == "applied"
+    assert applied.lead is not None
+    assert applied.lead.project_state == "closed"
+    assert ("close_project", 10) in fake.calls
+
+    noop_preview = await sales.lead_close_project("key", 10, apply=False, confirmation_token=None)
+    assert isinstance(noop_preview, MutationPreview)
+    noop = await sales.lead_close_project(
+        "key",
+        10,
+        apply=True,
+        confirmation_token=noop_preview.confirmation_token,
+    )
+    assert isinstance(noop, MutationResult)
+    assert noop.outcome == "no_op"
+
+    fake.projects[10] = fake.projects[10].model_copy(update={"status": 1})
+    fake.close_no_effect = True
+    partial_preview = await sales.lead_close_project(
+        "key", 10, apply=False, confirmation_token=None
+    )
+    assert isinstance(partial_preview, MutationPreview)
+    partial = await sales.lead_close_project(
+        "key",
+        10,
+        apply=True,
+        confirmation_token=partial_preview.confirmation_token,
     )
     assert isinstance(partial, MutationResult)
     assert partial.outcome == "partial"

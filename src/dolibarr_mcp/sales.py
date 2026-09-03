@@ -13,6 +13,9 @@ from dolibarr_mcp.errors import (
     DolibarrError,
     DolibarrNotFoundError,
     SalesConfirmationError,
+    SalesInactiveStageError,
+    SalesRequestError,
+    SalesStageResolutionError,
 )
 from dolibarr_mcp.models import (
     CustomerStatus,
@@ -23,6 +26,8 @@ from dolibarr_mcp.models import (
     LeadCreateInput,
     LeadDetail,
     LeadSearchResult,
+    LeadStageListResult,
+    LeadStageSummary,
     LeadSummary,
     LeadUpdateInput,
     MutationChange,
@@ -39,7 +44,10 @@ from dolibarr_mcp.models import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from dolibarr_mcp.client import DolibarrClient
+    from dolibarr_mcp.config import LeadStageConfig
 
 _CUSTOMER_STATUS_TO_API: dict[CustomerStatus, int] = {
     "neutral": 0,
@@ -53,6 +61,23 @@ _API_TO_CUSTOMER_STATUS: dict[int, CustomerStatus] = {
 _PROJECT_STATE_BY_API: dict[int, ProjectState] = {0: "draft", 1: "open", 2: "closed"}
 _LEADER_CODE = "PROJECTLEADER"
 _NOTE_LIMIT = 4000
+_STAGE_LIST_WARNING = (
+    "Dolibarr 23.0.3 has no complete opportunity-stage dictionary endpoint; rows combine "
+    "operator-configured entries with stages observed on project leads accessible to the caller."
+)
+_EMPTY_STAGE_CATALOG_WARNING = (
+    "dolibarr_lead_stage_catalog is empty in config.toml; unobserved custom codes cannot be "
+    "resolved."
+)
+_CONFIGURED_STAGE_WARNING = (
+    "Configured stage entries are operator-supplied metadata; Dolibarr remains authoritative "
+    "when a resolved numeric stage ID is written."
+)
+_GENERIC_CLOSE_WARNING = (
+    "Dolibarr 23.0.3 has no dedicated project-close REST action; this uses the fixed project "
+    "update endpoint to set status=2, so PROJECT_CLOSE triggers and close audit metadata are "
+    "not guaranteed."
+)
 
 
 def _normalize_text(value: str | None) -> str:
@@ -265,8 +290,24 @@ def _lead_api_payload(data: LeadCreateInput | LeadUpdateInput) -> dict[str, obje
 class SalesService:
     """Stateless sales facade over fixed Dolibarr REST operations."""
 
-    def __init__(self, client: DolibarrClient) -> None:
+    def __init__(
+        self,
+        client: DolibarrClient,
+        *,
+        lead_stage_catalog: Mapping[str, LeadStageConfig] | None = None,
+    ) -> None:
         self._client = client
+        self._lead_stage_entries = {
+            code.casefold(): (code, stage) for code, stage in (lead_stage_catalog or {}).items()
+        }
+        self._lead_stage_catalog: dict[str, tuple[str, LeadStageConfig]] = {}
+        self._lead_stage_catalog_by_id: dict[int, tuple[str, LeadStageConfig]] = {}
+        for code, stage in (lead_stage_catalog or {}).items():
+            entry = (code, stage)
+            self._lead_stage_catalog[code.casefold()] = entry
+            self._lead_stage_catalog_by_id[stage.id] = entry
+            for alias in stage.aliases:
+                self._lead_stage_catalog[alias.casefold()] = entry
 
     async def thirdparty_search(
         self,
@@ -371,6 +412,147 @@ class SalesService:
         payload = await self._lead_payload(api_key, project_id)
         _, owners = await self._leaders(api_key, project_id)
         return _lead_detail(payload, owners)
+
+    async def lead_stage_list(
+        self,
+        api_key: str,
+        *,
+        query: str | None,
+    ) -> LeadStageListResult:
+        """List configured stages plus distinct stages observed on accessible leads."""
+        needle = _normalize_text(query)
+        counts: dict[tuple[int, str | None], int] = {}
+        for project in await self._client.list_lead_stage_observations(api_key):
+            if not project.usage_opportunity or project.stage_id is None:
+                continue
+            code = project.stage_code.strip() if project.stage_code else None
+            key = (project.stage_id, code)
+            counts[key] = counts.get(key, 0) + 1
+        rows: list[LeadStageSummary] = []
+        warnings = [_STAGE_LIST_WARNING]
+        configured_ids: dict[int, str] = {}
+        configured_identifiers_by_id: dict[int, set[str]] = {}
+        for normalized_code, (code, stage) in self._lead_stage_entries.items():
+            configured_ids[stage.id] = normalized_code
+            configured_identifiers_by_id[stage.id] = {
+                normalized_code,
+                *(alias.casefold() for alias in stage.aliases),
+            }
+            observed_count = sum(
+                count
+                for (observed_id, _observed_code), count in counts.items()
+                if observed_id == stage.id
+            )
+            rows.append(
+                LeadStageSummary(
+                    stage_id=stage.id,
+                    stage_code=code,
+                    label=stage.label,
+                    aliases=stage.aliases,
+                    probability_percent=stage.percent,
+                    position=stage.position,
+                    active=stage.active,
+                    configured=True,
+                    observed_lead_count=observed_count,
+                )
+            )
+        for (stage_id, stage_code), observed_count in counts.items():
+            observed_normalized_code = stage_code.casefold() if stage_code else None
+            if stage_id in configured_ids or (
+                observed_normalized_code is not None
+                and observed_normalized_code in self._lead_stage_catalog
+            ):
+                configured_code = configured_ids.get(stage_id)
+                configured_entry = self._lead_stage_catalog.get(observed_normalized_code or "")
+                configured_id = configured_entry[1].id if configured_entry is not None else None
+                code_conflict = (
+                    observed_normalized_code is not None
+                    and observed_normalized_code
+                    not in configured_identifiers_by_id.get(stage_id, {configured_code or ""})
+                )
+                identifier_conflict = (
+                    observed_normalized_code is not None and configured_id not in {None, stage_id}
+                )
+                if code_conflict or identifier_conflict:
+                    warnings.append(
+                        "An observed stage conflicts with the operator catalog; configured "
+                        "resolution takes precedence."
+                    )
+                continue
+            rows.append(
+                LeadStageSummary(
+                    stage_id=stage_id,
+                    stage_code=stage_code,
+                    observed_lead_count=observed_count,
+                )
+            )
+        if self._lead_stage_entries:
+            warnings.append(_CONFIGURED_STAGE_WARNING)
+        else:
+            warnings.append(_EMPTY_STAGE_CATALOG_WARNING)
+        rows = [
+            row
+            for row in rows
+            if not needle
+            or needle
+            in " ".join(
+                [
+                    str(row.stage_id),
+                    _normalize_text(row.stage_code),
+                    _normalize_text(row.label),
+                    *(_normalize_text(alias) for alias in row.aliases),
+                ]
+            )
+        ]
+        rows.sort(
+            key=lambda row: (
+                row.position is None,
+                row.position if row.position is not None else 0,
+                (row.stage_code or "").casefold(),
+                row.stage_id,
+            )
+        )
+        return LeadStageListResult(
+            count=len(rows), rows=rows, warnings=list(dict.fromkeys(warnings))
+        )
+
+    async def _resolve_stage(
+        self,
+        api_key: str,
+        *,
+        stage_id: int | None,
+        stage_code: str | None,
+    ) -> tuple[int, str | None, str | None]:
+        if (stage_id is None) == (stage_code is None):
+            raise SalesRequestError
+        if stage_id is not None:
+            configured = self._lead_stage_catalog_by_id.get(stage_id)
+            if configured is None:
+                return stage_id, None, None
+            canonical_code, stage = configured
+            if not stage.active:
+                raise SalesInactiveStageError
+            return stage_id, canonical_code, _CONFIGURED_STAGE_WARNING
+        if stage_code is None:
+            raise SalesRequestError
+        normalized_code = stage_code.casefold()
+        configured = self._lead_stage_catalog.get(normalized_code)
+        if configured is not None:
+            canonical_code, stage = configured
+            if not stage.active:
+                raise SalesInactiveStageError
+            return stage.id, canonical_code, _CONFIGURED_STAGE_WARNING
+        matches = {
+            project.stage_id
+            for project in await self._client.list_lead_stage_observations(api_key)
+            if project.usage_opportunity
+            and project.stage_id is not None
+            and project.stage_code is not None
+            and project.stage_code.strip().casefold() == normalized_code
+        }
+        if len(matches) != 1:
+            raise SalesStageResolutionError
+        return matches.pop(), stage_code, None
 
     async def lead_search(
         self,
@@ -635,25 +817,37 @@ class SalesService:
         self,
         api_key: str,
         project_id: int,
-        stage_id: int,
         *,
+        stage_id: int | None,
+        stage_code: str | None,
         apply: bool,
         confirmation_token: str | None,
     ) -> MutationPreview | MutationResult:
+        resolved_stage_id, canonical_code, resolution_warning = await self._resolve_stage(
+            api_key,
+            stage_id=stage_id,
+            stage_code=stage_code,
+        )
         current = await self.lead_get(api_key, project_id)
-        proposed: dict[str, object] = {"stage_id": stage_id}
+        proposed: dict[str, object] = {"stage_id": resolved_stage_id}
+        token_proposed = dict(proposed)
+        if canonical_code is not None:
+            token_proposed["stage_code"] = canonical_code
         current_state = current.model_dump(mode="json")
         changes = _changes(current_state, proposed)
+        warnings = [resolution_warning] if resolution_warning else []
+        if not changes:
+            warnings.append("Lead already has this sales stage.")
         preview = MutationPreview(
             operation="lead_change_status",
             target_kind="lead",
             target_id=project_id,
             changes=changes,
-            warnings=[] if changes else ["Lead already has this sales stage."],
+            warnings=warnings,
             confirmation_token=_confirmation_token(
                 operation="lead_change_status",
                 target_id=project_id,
-                proposed=proposed,
+                proposed=token_proposed,
                 current=current_state,
             ),
         )
@@ -667,12 +861,26 @@ class SalesService:
                 warnings=preview.warnings,
                 lead=current,
             )
-        await self._client.update_project(api_key, project_id, {"fk_opp_status": stage_id})
+        await self._client.update_project(
+            api_key,
+            project_id,
+            {"fk_opp_status": resolved_stage_id},
+        )
         detail = await self.lead_get(api_key, project_id)
+        if detail.stage_id != resolved_stage_id:
+            return MutationResult(
+                operation=preview.operation,
+                outcome="partial",
+                target_id=project_id,
+                warnings=preview.warnings,
+                partial_errors=["Dolibarr did not return the requested sales stage."],
+                lead=detail,
+            )
         return MutationResult(
             operation=preview.operation,
             outcome="applied",
             target_id=project_id,
+            warnings=preview.warnings,
             lead=detail,
         )
 
@@ -725,6 +933,66 @@ class SalesService:
             operation=preview.operation,
             outcome="applied",
             target_id=project_id,
+            lead=detail,
+        )
+
+    async def lead_close_project(
+        self,
+        api_key: str,
+        project_id: int,
+        *,
+        apply: bool,
+        confirmation_token: str | None,
+    ) -> MutationPreview | MutationResult:
+        """Preview or set one open lead project's lifecycle state to closed."""
+        current = await self.lead_get(api_key, project_id)
+        if current.project_state == "draft":
+            raise SalesRequestError
+        proposed: dict[str, object] = {"project_state": "closed"}
+        current_state = current.model_dump(mode="json")
+        changes = _changes(current_state, proposed)
+        warnings = [_GENERIC_CLOSE_WARNING]
+        if not changes:
+            warnings.append("Project is already closed.")
+        preview = MutationPreview(
+            operation="lead_close_project",
+            target_kind="lead",
+            target_id=project_id,
+            changes=changes,
+            warnings=warnings,
+            confirmation_token=_confirmation_token(
+                operation="lead_close_project",
+                target_id=project_id,
+                proposed=proposed,
+                current=current_state,
+            ),
+        )
+        if not _confirmed(preview, apply=apply, token=confirmation_token):
+            return preview
+        if not changes:
+            return MutationResult(
+                operation=preview.operation,
+                outcome="no_op",
+                target_id=project_id,
+                warnings=preview.warnings,
+                lead=current,
+            )
+        await self._client.close_project(api_key, project_id)
+        detail = await self.lead_get(api_key, project_id)
+        if detail.project_state != "closed":
+            return MutationResult(
+                operation=preview.operation,
+                outcome="partial",
+                target_id=project_id,
+                warnings=preview.warnings,
+                partial_errors=["Dolibarr did not return the project in closed state."],
+                lead=detail,
+            )
+        return MutationResult(
+            operation=preview.operation,
+            outcome="applied",
+            target_id=project_id,
+            warnings=preview.warnings,
             lead=detail,
         )
 

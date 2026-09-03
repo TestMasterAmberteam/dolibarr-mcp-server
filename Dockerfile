@@ -19,15 +19,13 @@ FROM python:3.12.11-slim-bookworm AS runtime
 
 LABEL org.opencontainers.image.title="dolibarr-mcp-server" \
       org.opencontainers.image.description="Stateless per-user Dolibarr MCP server" \
-      org.opencontainers.image.version="0.3.0" \
+      org.opencontainers.image.version="0.4.0" \
       org.opencontainers.image.licenses="MIT"
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    TMPDIR=/tmp \
-    HOST=0.0.0.0 \
-    PORT=8000
+    TMPDIR=/tmp
 
 RUN groupadd --gid 10001 app && \
     useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin app

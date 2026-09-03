@@ -85,6 +85,18 @@ class SalesRequestError(DolibarrError):
     public_message = "Invalid sales operation parameters."
 
 
+class SalesStageResolutionError(SalesRequestError):
+    """A supplied stage code cannot be mapped to one numeric identifier."""
+
+    public_message = "Sales stage code is not uniquely resolvable."
+
+
+class SalesInactiveStageError(SalesRequestError):
+    """A configured Dolibarr opportunity stage is inactive."""
+
+    public_message = "Configured sales stage is inactive."
+
+
 class SalesConfirmationError(DolibarrError):
     """A preview token is missing or no longer matches current state."""
 

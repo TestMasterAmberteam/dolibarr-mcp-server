@@ -4,6 +4,7 @@
 .tool-cache/
 .uv-cache/
 .env
+config.toml
 .coverage
 coverage.xml
 htmlcov/

@@ -22,6 +22,7 @@ from dolibarr_mcp.errors import (
     InvalidDolibarrResponseError,
 )
 from dolibarr_mcp.models import (
+    DolibarrLeadStageObservationPayload,
     DolibarrLeaveRequestPayload,
     DolibarrLeaveTypePayload,
     DolibarrProjectContactPayload,
@@ -57,6 +58,7 @@ _IDENTITY_ADAPTER = TypeAdapter(DolibarrUserPayload)
 _LEAVE_ADAPTER = TypeAdapter(DolibarrLeaveRequestPayload)
 _LEAVE_LIST_ADAPTER = TypeAdapter(list[DolibarrLeaveRequestPayload])
 _LEAVE_TYPE_LIST_ADAPTER = TypeAdapter(list[DolibarrLeaveTypePayload])
+_LEAD_STAGE_OBSERVATION_LIST_ADAPTER = TypeAdapter(list[DolibarrLeadStageObservationPayload])
 _PROJECT_ADAPTER = TypeAdapter(DolibarrProjectPayload)
 _PROJECT_LIST_ADAPTER = TypeAdapter(list[DolibarrProjectPayload])
 _PROJECT_CONTACT_LIST_ADAPTER = TypeAdapter(list[DolibarrProjectContactPayload])
@@ -471,6 +473,25 @@ class DolibarrClient:
                 return rows
         raise DolibarrResultLimitError
 
+    async def list_lead_stage_observations(
+        self,
+        api_key: str,
+    ) -> list[DolibarrLeadStageObservationPayload]:
+        """Return minimal stage projections for accessible projects within a fixed bound."""
+        rows: list[DolibarrLeadStageObservationPayload] = []
+        properties = "id,usage_opportunity,fk_opp_status,opp_status,opp_status_code"
+        for page in range(_MAX_SALES_RECORDS // _UPSTREAM_PAGE_SIZE):
+            current = await self._get_api(
+                api_key,
+                path="projects",
+                params={"limit": _UPSTREAM_PAGE_SIZE, "page": page, "properties": properties},
+                adapter=_LEAD_STAGE_OBSERVATION_LIST_ADAPTER,
+            )
+            rows.extend(current)
+            if len(current) < _UPSTREAM_PAGE_SIZE:
+                return rows
+        raise DolibarrResultLimitError
+
     async def create_project(self, api_key: str, payload: dict[str, object]) -> int:
         """Create one project through the fixed official endpoint."""
         return await self._request_api(
@@ -493,6 +514,16 @@ class DolibarrClient:
             method="PUT",
             path=f"projects/{project_id}",
             json_body=payload,
+            adapter=_PROJECT_ADAPTER,
+        )
+
+    async def close_project(self, api_key: str, project_id: int) -> DolibarrProjectPayload:
+        """Set the lifecycle state to closed through the fixed project update endpoint."""
+        return await self._request_api(
+            api_key,
+            method="PUT",
+            path=f"projects/{project_id}",
+            json_body={"status": 2},
             adapter=_PROJECT_ADAPTER,
         )
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from dolibarr_mcp import __version__
@@ -17,13 +18,19 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run the stateless Dolibarr MCP Streamable HTTP server.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("config.toml"),
+        help="path to non-secret TOML configuration (default: config.toml)",
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Validate CLI/configuration and run one Uvicorn process."""
     parser = build_parser()
-    parser.parse_args(argv)
+    args = parser.parse_args(argv)
 
     # Keep runtime imports below argument handling so an isolated wheel can expose
     # help and version metadata without importing its uninstalled dependencies.
@@ -31,11 +38,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     from pydantic import ValidationError  # noqa: PLC0415
 
     from dolibarr_mcp.app import create_app  # noqa: PLC0415
-    from dolibarr_mcp.config import Settings  # noqa: PLC0415
+    from dolibarr_mcp.config import ConfigurationFileError, load_settings  # noqa: PLC0415
     from dolibarr_mcp.logging import configure_logging  # noqa: PLC0415
 
     try:
-        settings = Settings()
+        settings = load_settings(args.config)
+    except ConfigurationFileError:
+        parser.error("invalid or unreadable configuration file")
     except ValidationError as exc:
         parser.error(f"invalid configuration: {exc.error_count()} validation error(s)")
     configure_logging(settings.log_level)

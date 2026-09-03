@@ -27,14 +27,14 @@ not OAuth. Clients must already possess the key and be able to set a custom Auth
 ## Transport requirements
 
 Production traffic must use HTTPS. The application deliberately allows insecure HTTP only for
-literal loopback hosts when `ALLOW_INSECURE_LOCALHOST=true`.
+literal loopback hosts when `allow_insecure_localhost=true` in `config.toml`.
 
-Set exact `MCP_ALLOWED_HOSTS` and, only for browser clients, exact `MCP_ALLOWED_ORIGINS`. Production
+Set exact `mcp_allowed_hosts` and, only for browser clients, exact `mcp_allowed_origins`. Production
 values may not use wildcards. The application does not enable CORS and does not trust
 `X-Forwarded-*`. Configure the reverse proxy to:
 
 - terminate TLS with a maintained certificate and modern policy;
-- replace, not append, the `Host` sent upstream and match it in `MCP_ALLOWED_HOSTS`;
+- replace, not append, the `Host` sent upstream and match it in `mcp_allowed_hosts`;
 - remove untrusted forwarding headers unless another trusted component needs them;
 - preserve `Authorization` only on the protected upstream location and never log it;
 - limit request body size and timeouts;
@@ -46,9 +46,9 @@ An in-process limiter is intentionally absent because it would be inconsistent a
 ## Upstream TLS and networking
 
 `httpx2` uses TLS verification, no redirects, no environment proxy discovery, explicit timeouts,
-and bounded pools. Mount a private CA read-only and set `DOLIBARR_CA_BUNDLE` if required. Do not
-disable TLS verification. Egress policy should restrict the service to the configured Dolibarr host
-and required infrastructure.
+and bounded pools. Mount a private CA read-only and set `dolibarr_ca_bundle` in `config.toml` if
+required. Do not disable TLS verification. Egress policy should restrict the service to the
+configured Dolibarr host and required infrastructure.
 
 ## Reporting data boundary
 
@@ -82,8 +82,21 @@ and are safe to invalidate by changing the request or upstream record.
 No write is automatically retried. A timeout after an upstream write can have an ambiguous
 outcome, so callers must re-read before trying again. Replacing project leaders uses several API
 calls and may return `partial`; the refreshed result is authoritative for the state observed after
-the failure. Project closing and returning to draft remain excluded because Dolibarr 23.0.3 lacks
-dedicated REST actions equivalent to its GUI semantics.
+the failure. Returning a project to draft remains excluded. Project closing uses a separate fixed
+`status=2` update because Dolibarr 23.0.3 lacks a dedicated close REST action. The request cannot
+select another status or payload, and preview/result warnings disclose that close triggers and
+closing-user/date metadata are not guaranteed. The refreshed project state is authoritative.
+
+Lead-stage discovery scans only a minimal typed project projection within the existing 10,000-row
+bound. It merges distinct ID/code pairs observed on lead projects the caller may read with an
+optional startup-only `[dolibarr_lead_stage_catalog.<CODE>]` table in `config.toml`. Canonical codes,
+aliases, IDs, labels, percentages, positions, activity flags, cardinality, and case-insensitive
+uniqueness are validated; tools cannot modify the mapping. The result labels configured rows and
+remains incomplete. It never queries the database, scrapes the UI, or claims to expose the live
+Dolibarr dictionary. Stage-code writes resolve a configured canonical code or alias first, reject
+configured inactive stages, or require one unambiguous observed ID before the ordinary
+preview-token flow. The authoritative reread must expose the resolved ID, otherwise the result is
+`partial` rather than `applied`.
 
 ## Leave-request data and write boundary
 

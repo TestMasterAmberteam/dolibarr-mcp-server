@@ -181,6 +181,27 @@ class DolibarrProjectPayload(BaseModel):
         return _blank_to_none(value)
 
 
+class DolibarrLeadStageObservationPayload(BaseModel):
+    """Minimal project projection used to discover stages on accessible leads."""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    project_id: int = Field(alias="id", gt=0)
+    usage_opportunity: bool = False
+    stage_id: int | None = Field(
+        default=None,
+        validation_alias=AliasChoices("fk_opp_status", "opp_status"),
+        gt=0,
+    )
+    stage_code: str | None = Field(default=None, alias="opp_status_code", max_length=64)
+
+    @field_validator("stage_id", "stage_code", mode="before")
+    @classmethod
+    def blank_stage_value(cls, value: object) -> object:
+        """Treat Dolibarr's empty optional stage values as absent."""
+        return _blank_to_none(value)
+
+
 class DolibarrThirdpartyPayload(BaseModel):
     """Allowlisted subset of a Dolibarr third-party object."""
 
@@ -706,6 +727,36 @@ class ThirdpartySearchResult(BaseModel):
     limit: int = Field(gt=0)
     has_more: bool
     rows: list[ThirdpartySummary]
+
+
+class LeadStageSummary(BaseModel):
+    """One configured or observed opportunity-stage dictionary row."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    stage_id: int = Field(gt=0)
+    stage_code: NonEmptyString | None = None
+    label: NonEmptyString | None = None
+    aliases: list[NonEmptyString] = Field(default_factory=list, max_length=10)
+    probability_percent: float | None = Field(default=None, ge=0, le=100)
+    position: int | None = None
+    active: bool | None = None
+    configured: bool = False
+    observed_lead_count: int = Field(ge=0)
+
+
+class LeadStageListResult(BaseModel):
+    """Configured and observed stages; Dolibarr has no complete dictionary API."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    count: int = Field(ge=0)
+    complete: Literal[False] = False
+    source: Literal["operator_catalog_and_accessible_leads"] = (
+        "operator_catalog_and_accessible_leads"
+    )
+    rows: list[LeadStageSummary]
+    warnings: list[str]
 
 
 class LeadSummary(BaseModel):

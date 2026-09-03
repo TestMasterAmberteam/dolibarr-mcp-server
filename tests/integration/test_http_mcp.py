@@ -16,7 +16,7 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 
 from dolibarr_mcp.app import create_app
-from dolibarr_mcp.config import Settings
+from dolibarr_mcp.config import LeadStageConfig, Settings
 
 pytestmark = [pytest.mark.anyio, pytest.mark.integration]
 
@@ -38,12 +38,14 @@ TOOL_NAMES = [
     "dolibarr_thirdparty_update",
     "dolibarr_user_search",
     "dolibarr_lead_search",
+    "dolibarr_lead_stage_list",
     "dolibarr_lead_get",
     "dolibarr_lead_create",
     "dolibarr_lead_update",
     "dolibarr_lead_change_status",
     "dolibarr_lead_assign",
     "dolibarr_lead_open_project",
+    "dolibarr_lead_close_project",
     "dolibarr_leave_type_list",
     "dolibarr_leave_request_search",
     "dolibarr_leave_request_get",
@@ -60,6 +62,7 @@ READ_ONLY_TOOL_NAMES = {
     *TOOL_NAMES[:8],
     "dolibarr_user_search",
     "dolibarr_lead_search",
+    "dolibarr_lead_stage_list",
     "dolibarr_lead_get",
     "dolibarr_leave_type_list",
     "dolibarr_leave_request_search",
@@ -366,6 +369,92 @@ async def test_confirmed_sales_write_crosses_auth_and_uses_request_key(
     ]
     assert write_calls == [("POST", "/dolibarr/api/index.php/thirdparties", "fake-token-A")]
     assert all(token == "fake-token-A" for _method, _path, token in calls)
+
+
+async def test_stage_lookup_and_confirmed_project_close_cross_auth(
+    settings: Settings,
+) -> None:
+    settings = settings.model_copy(
+        update={
+            "dolibarr_lead_stage_catalog": {
+                "LOST": LeadStageConfig(
+                    id=7,
+                    label="P3L - Lost",
+                    aliases=["P3L"],
+                    percent=0,
+                    position=70,
+                    active=True,
+                )
+            }
+        },
+    )
+    calls: list[tuple[str, str, str]] = []
+    closed = False
+
+    def lead_payload() -> dict[str, object]:
+        return {
+            "id": 10,
+            "ref": "L-10",
+            "title": "Axians Lead",
+            "usage_opportunity": 1,
+            "fk_opp_status": 7,
+            "opp_status_code": "LOST",
+            "status": 2 if closed else 1,
+        }
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal closed
+        path = request.url.path
+        token = request.headers.get("DOLAPIKEY", "")
+        calls.append((request.method, path, token))
+        if path.endswith("/users/info"):
+            return httpx2.Response(200, json=IDENTITIES[token])
+        if path.endswith("/projects") and request.method == "GET":
+            return httpx2.Response(200, json=[])
+        if path.endswith("/projects/10/contacts") and request.method == "GET":
+            return httpx2.Response(200, json=[])
+        if path.endswith("/projects/10") and request.method == "GET":
+            return httpx2.Response(200, json=lead_payload())
+        if path.endswith("/projects/10") and request.method == "PUT":
+            assert request.content == b'{"status":2}'
+            closed = True
+            return httpx2.Response(200, json=lead_payload())
+        raise AssertionError((request.method, path))
+
+    async with asgi_client(
+        settings,
+        httpx2.MockTransport(handler),
+        token="fake-token-A",
+    ) as client:
+        transport = streamable_http_client("http://localhost/mcp", http_client=client)
+        async with Client(transport, mode="legacy") as mcp_client:
+            stages = await mcp_client.call_tool("dolibarr_lead_stage_list", {"query": "P3L"})
+            status_preview = await mcp_client.call_tool(
+                "dolibarr_lead_change_status",
+                {"project_id": 10, "stage_code": "P3L"},
+            )
+            preview = await mcp_client.call_tool("dolibarr_lead_close_project", {"project_id": 10})
+            assert preview.structured_content is not None
+            token = preview.structured_content["confirmation_token"]
+            applied = await mcp_client.call_tool(
+                "dolibarr_lead_close_project",
+                {"project_id": 10, "apply": True, "confirmation_token": token},
+            )
+
+    assert stages.structured_content is not None
+    assert stages.structured_content["complete"] is False
+    assert stages.structured_content["rows"][0]["stage_id"] == 7
+    assert stages.structured_content["rows"][0]["stage_code"] == "LOST"
+    assert stages.structured_content["rows"][0]["aliases"] == ["P3L"]
+    assert stages.structured_content["rows"][0]["configured"] is True
+    assert status_preview.structured_content is not None
+    assert status_preview.structured_content["changes"] == []
+    assert applied.structured_content is not None
+    assert applied.structured_content["outcome"] == "applied"
+    assert applied.structured_content["lead"]["project_state"] == "closed"
+    writes = [call for call in calls if call[0] == "PUT"]
+    assert writes == [("PUT", "/dolibarr/api/index.php/projects/10", "fake-token-A")]
+    assert all(call_token == "fake-token-A" for _method, _path, call_token in calls)
 
 
 async def test_confirmed_leave_approval_crosses_auth_and_uses_request_key(

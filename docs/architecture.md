@@ -7,7 +7,7 @@ The service has four explicit layers:
 1. Starlette/Uvicorn owns HTTP, health routes, correlation IDs, and startup/shutdown.
 2. Transport security and Bearer middleware validate `Host`, `Origin`, header syntax, and the
    presented key before MCP parses a message.
-3. One `MCPServer` instance dispatches 28 allowlisted reporting, sales, and leave tools.
+3. One `MCPServer` instance dispatches 30 allowlisted reporting, sales, and leave tools.
 4. `DolibarrClient` owns one `httpx2.AsyncClient` pool, the fixed `/users/info` operation, and
    fixed project, third-party, contact-relation, user-label, time-entry, leave-type, and
    leave-request REST operations.
@@ -38,9 +38,13 @@ not. There are no other application endpoints.
 
 ## Data boundaries
 
-Operator input chooses `DOLIBARR_BASE_URL` only at startup. Neither the user nor a tool can change
-the host. API keys are permitted only in the incoming `Authorization` header and the one outgoing
-`DOLAPIKEY` header. They are never accepted as query, cookie, body, environment, or tool data.
+One explicit `config.toml` supplies all non-secret application settings, including
+`dolibarr_base_url` and optional validated `[dolibarr_lead_stage_catalog.<CODE>]` records containing
+operator-verified stage IDs, labels, aliases, percentages, positions, and activity flags.
+The server does not read `.env` or overlay process environment variables. Neither the user nor a
+tool can change the host or catalog. API keys are permitted only in the incoming `Authorization`
+header and the one outgoing `DOLAPIKEY` header. They are never accepted as query, cookie, body,
+environment, configuration-file, or tool data.
 
 The public identity is an allowlist: integer ID, login, optional first name, and optional last name.
 Reporting projections allowlist time-line ID, UTC day, duration, user label, project label, task
@@ -60,6 +64,12 @@ Sales search pages through fixed `/thirdparties`, `/projects`, and `/users` endp
 text matching locally. It never accepts or constructs a Dolibarr `sqlfilters` expression. Scans are
 bounded at 10,000 records. A lead is accepted only when the project payload has
 `usage_opportunity=1`; third-party `client=2` remains an independent prospect classification.
+Stage discovery uses a separate minimal `/projects` projection and merges only ID/code pairs
+observed on accessible lead projects with the optional operator catalog. The result marks each
+configured row, exposes its static metadata, and remains explicitly incomplete because Dolibarr
+23.0.3 does not expose the configured lead-stage dictionary through REST. A stage-code mutation
+resolves a case-insensitive canonical code or alias first, otherwise requires exactly one observed
+ID. Configured inactive stages and unresolved or ambiguous codes fail before preview.
 
 Leave searches page through fixed `/holidays` and
 `/setup/dictionary/holiday_types` endpoints, then apply typed filters locally. They never accept
@@ -77,11 +87,18 @@ current API state and recomputes the token. A mismatch returns a safe conflict b
 The token is a workflow and stale-state guard, not a credential or replacement for Dolibarr
 authorization. Callers already holding the API key could call Dolibarr directly.
 
-Third-party and lead creates use fixed POSTs. Partial field edits and sales-stage changes use fixed
-PUTs. Draft validation and reopening use `POST /projects/{id}/validate`. Owner replacement first
+Third-party and lead creates use fixed POSTs. Partial field edits and resolved sales-stage changes
+use fixed PUTs. A stage change re-reads the lead and returns `partial` unless the requested numeric
+ID is visible. Draft validation and reopening use `POST /projects/{id}/validate`. Owner replacement first
 adds the desired internal `PROJECTLEADER`, then removes previous relations. Because Dolibarr offers
 no transaction spanning those calls, the tool reports `partial` and refreshes the lead when a later
 step fails. Writes are never automatically retried.
+
+Lead-project closing is a separate confirmed operation restricted to an open lead. Dolibarr
+23.0.3 has no dedicated close REST action, so the client sends only `{"status": 2}` to the fixed
+`PUT /projects/{id}` endpoint and then re-reads the project. The preview and result warn that this
+generic update does not guarantee `PROJECT_CLOSE` triggers or close audit metadata; an unexpected
+post-write state is returned as `partial`.
 
 Leave creation and draft-only edits use fixed `POST /holidays` and `PUT /holidays/{id}` calls.
 Submission maps to Dolibarr's `validate` action; approval, refusal, cancellation, and reopening
@@ -98,6 +115,10 @@ remains authoritative for permission, overlap, configured approver, and balance 
 - Reporting 403 and 404 responses become safe, typed tool errors without upstream bodies.
 - Write validation failures and conflicts become safe typed errors without upstream bodies.
 - Multi-call owner assignment can return an explicit partial result with the refreshed lead state.
+- A sales-stage update whose requested ID is not visible after reread returns a partial result.
+- A configured inactive sales stage is rejected before preview, including when selected by ID.
+- A generic lead-project close that does not persist state `closed` returns a partial refreshed
+  result and never claims trigger-equivalent semantics.
 - A leave action that does not persist its expected status returns a partial refreshed result.
 
 No mapping returns upstream bodies, URLs, headers, exception chains, or credentials.

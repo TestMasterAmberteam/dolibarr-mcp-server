@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-21
+- Amended: 2026-09-03
 
 ## Context
 
@@ -46,8 +47,31 @@ not authentication or proof of human identity; Dolibarr permissions remain autho
 
 New lead projects require an existing third party and explicit opportunity stage. They are created
 with `ref=auto`, `usage_opportunity=1`, and draft state. Opening a draft or reopening a closed lead
-uses the dedicated `POST /projects/{id}/validate` API. Project closing and returning to draft are
-not exposed because Dolibarr 23.0.3 has no equivalent dedicated REST action.
+uses the dedicated `POST /projects/{id}/validate` API.
+
+Dolibarr 23.0.3 has no official endpoint for the configured opportunity-stage dictionary. A
+read-only stage tool therefore scans a minimal, fixed `/projects` projection and merges distinct
+ID/code pairs observed on accessible projects with an optional operator-owned
+`[dolibarr_lead_stage_catalog.<CODE>]` table in `config.toml`. Each record contains the canonical
+Dolibarr code plus a positive ID, bounded label and aliases, probability percentage, display
+position, and activity flag. The catalog is bounded and validated at startup for safe identifiers,
+positive unique IDs, and global case-insensitive code/alias uniqueness. Its wire result always sets
+`complete=false`, marks configured rows, exposes their static metadata, and warns about source
+limitations. It does not query the database or scrape the GUI.
+
+The status-change tool accepts exactly one numeric `stage_id` or bounded `stage_code`. Code lookup
+prefers a canonical code or alias from the immutable operator catalog, otherwise it requires exactly
+one matching ID observed on accessible leads. A configured inactive stage is rejected whether
+selected by identifier or numeric ID. Missing or ambiguous codes fail before preview. The resolved
+numeric ID and canonical code are bound into the preview token; only `fk_opp_status` is written.
+The post-write reread must expose the resolved ID, otherwise the result is `partial`.
+
+Dolibarr 23.0.3 also has no dedicated project-close REST action, although the general project PUT
+accepts lifecycle `status=2`. A separate preview-confirmed close tool is restricted to open leads
+and sends the fixed payload `{"status": 2}` to `PUT /projects/{id}`. It then re-reads the lead and
+returns `partial` unless the state is closed. Every preview and result warns that this generic path
+does not guarantee the `PROJECT_CLOSE` trigger, closing user/date metadata, or GUI-equivalent
+semantics. Returning a project to draft remains unexposed.
 
 Lead assignment represents one owner by internal `PROJECTLEADER` relations. The service adds the
 desired user before removing previous leaders. It does not affect project tasks. If a later call
@@ -73,7 +97,10 @@ Costs and constraints:
 - search completeness stops at the documented local processing bound;
 - create idempotency is best-effort duplicate detection, not a database uniqueness guarantee;
 - a timeout after Dolibarr accepted a write is ambiguous and requires a read before retry;
-- the complete lead-stage dictionary is unavailable through the official API in this version;
+- the complete lead-stage dictionary remains unavailable; unobserved custom codes require an
+  operator to verify and configure their numeric IDs;
+- the generic close transition reaches state `closed` but cannot promise close triggers or audit
+  metadata that Dolibarr's unexposed `Project::setClose()` would create;
 - adding and removing project leaders cannot be made transactional by this adapter.
 
 ## Rejected alternatives
@@ -87,3 +114,11 @@ Costs and constraints:
 - A caller-provided boolean without a state-bound token would not detect stale records.
 - Automatic write retry would risk duplicates and repeated partial operations.
 - Treating third-party `prospect` as a lead would contradict the configured Dolibarr workflow.
+- Scraping the dictionary UI or querying `c_lead_status` directly would bypass the API-only trust
+  boundary and caller authorization.
+- Treating `P3L` as a Dolibarr code would conflate the business prefix in `P3L - Lost` with the
+  canonical `LOST` code. The operator catalog represents it explicitly as an alias.
+- Guessing or shipping a universal `LOST` ID would be incorrect because lead-stage IDs belong to
+  the specific Dolibarr installation; the mapping is explicit operator configuration instead.
+- Naming the generic project PUT trigger-equivalent would overstate Dolibarr 23.0.3 behavior; the
+  tool instead discloses the semantic gap before confirmation and in the final result.

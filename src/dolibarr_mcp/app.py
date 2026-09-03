@@ -19,7 +19,7 @@ from dolibarr_mcp.auth import (
     authentication_error_response,
 )
 from dolibarr_mcp.client import DolibarrClient
-from dolibarr_mcp.config import Settings
+from dolibarr_mcp.config import Settings, load_settings
 from dolibarr_mcp.credentials import RequestCredentialContextMiddleware
 from dolibarr_mcp.logging import RequestContextMiddleware
 from dolibarr_mcp.server import create_mcp_server
@@ -88,7 +88,10 @@ def create_app(
 ) -> Starlette:
     """Compose one production ASGI application and its shared resources."""
     client = DolibarrClient(settings, transport=transport)
-    mcp_server = create_mcp_server(client)
+    mcp_server = create_mcp_server(
+        client,
+        lead_stage_catalog=settings.dolibarr_lead_stage_catalog,
+    )
     transport_security = TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
         allowed_hosts=settings.allowed_hosts,
@@ -153,6 +156,6 @@ def create_app(
     return app
 
 
-def build_app_from_environment() -> Starlette:
-    """Validate environment configuration and return the ASGI app."""
-    return create_app(Settings())
+def build_app_from_config(config_path: str = "config.toml") -> Starlette:
+    """Validate one TOML configuration file and return the ASGI app."""
+    return create_app(load_settings(config_path))

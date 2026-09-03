@@ -167,8 +167,8 @@ def test_custom_ca_builds_ssl_context(tmp_path: Path, monkeypatch: pytest.Monkey
     ca_bundle.write_text("test fixture", encoding="utf-8")
     ca_settings = Settings.model_validate(
         {
-            "DOLIBARR_BASE_URL": "https://erp.example.org",
-            "DOLIBARR_CA_BUNDLE": ca_bundle,
+            "dolibarr_base_url": "https://erp.example.org",
+            "dolibarr_ca_bundle": ca_bundle,
         }
     )
     original = ssl.create_default_context
@@ -333,6 +333,8 @@ async def test_sales_client_uses_only_fixed_api_routes_and_payloads(settings: Se
                         "ref": "PJ-10",
                         "title": "Lead",
                         "usage_opportunity": 1,
+                        "fk_opp_status": 7,
+                        "opp_status_code": "LOST",
                     }
                 ],
             )
@@ -357,6 +359,7 @@ async def test_sales_client_uses_only_fixed_api_routes_and_payloads(settings: Se
         if path.endswith("/projects/10/validate"):
             return httpx2.Response(200, json={"success": {"code": 200}})
         if path.endswith("/projects/10"):
+            status = 2 if request.content == b'{"status":2}' else 1
             return httpx2.Response(
                 200,
                 json={
@@ -364,6 +367,7 @@ async def test_sales_client_uses_only_fixed_api_routes_and_payloads(settings: Se
                     "ref": "PJ-10",
                     "title": "Lead",
                     "usage_opportunity": 1,
+                    "status": status,
                 },
             )
         if path.endswith("/users/7"):
@@ -409,6 +413,56 @@ async def test_sales_client_uses_only_fixed_api_routes_and_payloads(settings: Se
         if request.method == "POST" and request.url.path.endswith("/thirdparties")
     )
     assert create_request.content == b'{"name":"New","client":2}'
+    assert all("sqlfilters" not in request.url.params for request in seen)
+
+
+async def test_stage_observations_and_close_use_minimal_fixed_project_calls(
+    settings: Settings,
+) -> None:
+    seen: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        if request.url.path.endswith("/projects"):
+            return httpx2.Response(
+                200,
+                json=[
+                    {
+                        "id": 10,
+                        "usage_opportunity": 1,
+                        "fk_opp_status": 7,
+                        "opp_status_code": "LOST",
+                    }
+                ],
+            )
+        if request.url.path.endswith("/projects/10"):
+            assert request.content == b'{"status":2}'
+            return httpx2.Response(
+                200,
+                json={
+                    "id": 10,
+                    "ref": "PJ-10",
+                    "title": "Lead",
+                    "usage_opportunity": 1,
+                    "status": 2,
+                },
+            )
+        raise AssertionError((request.method, request.url.path))
+
+    async with DolibarrClient(
+        settings,
+        transport=httpx2.MockTransport(handler),
+    ) as client:
+        stages = await client.list_lead_stage_observations("sales-key")
+        closed_project = await client.close_project("sales-key", 10)
+
+    assert stages[0].stage_id == 7
+    assert stages[0].stage_code == "LOST"
+    assert closed_project.status == 2
+    assert seen[0].url.params["properties"] == (
+        "id,usage_opportunity,fk_opp_status,opp_status,opp_status_code"
+    )
+    assert all(request.headers["DOLAPIKEY"] == "sales-key" for request in seen)
     assert all("sqlfilters" not in request.url.params for request in seen)
 
 

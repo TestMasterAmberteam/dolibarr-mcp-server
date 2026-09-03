@@ -16,6 +16,16 @@ All notable changes to this project are documented here. The format follows
 - Read-only third-party, project-lead, and active-user lookup tools.
 - Confirmed create and update tools for third parties and project-based leads.
 - Separate opportunity-stage, project validate/reopen, and `PROJECTLEADER` assignment operations.
+- Read-only lead-stage catalog merging validated operator records (canonical code, ID, label,
+  aliases, percentage, position, and activity) with observations from accessible leads, while
+  retaining explicit incompleteness metadata.
+- Sales-stage changes by either numeric `stage_id` or a uniquely resolvable canonical code or alias;
+  for example, business alias `P3L` resolves to canonical Dolibarr code `LOST` and ID `7` only when
+  explicitly configured.
+- File-only `config.toml` loading for all non-secret application settings, with an explicit
+  `--config` path and no `.env` or process-environment overlay (ADR 0005).
+- Preview-confirmed lead-project closing through a fixed `status=2` project update, authoritative
+  reread, partial-outcome handling, and warnings about missing dedicated close semantics.
 - Stateless preview tokens with stale-state checks, duplicate warnings, and explicit partial-write
   results (ADR 0003).
 - Read-only leave-type, leave-request search, and leave-request detail tools.
@@ -27,12 +37,19 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 
 - Delayed server-only imports so clean-wheel `--help` and `--version` checks need no dependencies.
+- Distinguished canonical Dolibarr lead-stage codes from business label prefixes and rejected
+  configured inactive stages for both identifier- and ID-based status changes.
 
 ### Security
 
 - Raised the development test runner to `pytest>=9.0.3` to exclude `PYSEC-2026-1845`.
 - Kept sales access API-only with fixed methods, paths, and payload allowlists; no database,
   `sqlfilters`, credentials, headers, or arbitrary upstream paths are exposed to tools.
+- Kept stage discovery read-only and bounded; operator stage mappings are validated startup
+  metadata, while project closing accepts no caller-supplied status or payload and always warns
+  that Dolibarr's close trigger and audit metadata are absent.
+- Removed non-secret application configuration from `.env`, process environment variables, and
+  Compose interpolation; the per-user API key remains request-scoped and absent from server config.
 - Kept leave access API-only with fixed routes, typed projections, local filters, and dedicated
   action endpoints; no database, browser automation, delete, balance override, or arbitrary
   `sqlfilters` is exposed.

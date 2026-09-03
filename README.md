@@ -1,7 +1,7 @@
 # dolibarr-mcp-server
 
 A remote, stateless [Model Context Protocol](https://modelcontextprotocol.io/) server that
-authenticates each caller with that caller's own Dolibarr API key. It exposes 28 allowlisted tools
+authenticates each caller with that caller's own Dolibarr API key. It exposes 30 allowlisted tools
 for identity, time reporting, sales records, and leave requests while preserving
 Dolibarr's per-user permissions.
 
@@ -35,7 +35,7 @@ flowchart LR
     H --> B[Strict Bearer middleware]
     B -->|DOLAPIKEY: user key| D[Dolibarr /users/info]
     D -->|validated safe profile| X[request-scoped auth and credential contexts]
-    X --> M[MCPServer: 28 allowlisted tools]
+    X --> M[MCPServer: 30 allowlisted tools]
     M -->|DOLAPIKEY: same user key| R[Fixed Dolibarr REST operations]
     R -->|allowlisted reporting, sales, and leave data| M
     M --> P[Stateless mutation preview and stale-state token]
@@ -50,7 +50,8 @@ See [architecture](docs/architecture.md), [security design](docs/security.md), a
 [ADR 0001](docs/adr/0001-direct-dolibarr-api-key-authentication.md) plus
 [ADR 0002](docs/adr/0002-request-scoped-reporting-credentials.md) and
 [ADR 0003](docs/adr/0003-confirmed-api-only-sales-writes.md) plus
-[ADR 0004](docs/adr/0004-confirmed-api-only-leave-request-workflow.md).
+[ADR 0004](docs/adr/0004-confirmed-api-only-leave-request-workflow.md) and
+[ADR 0005](docs/adr/0005-file-only-non-secret-configuration.md).
 
 ## Requirements
 
@@ -65,49 +66,52 @@ See [architecture](docs/architecture.md), [security design](docs/security.md), a
 
 ```bash
 uv sync --locked --all-groups
-cp .env.example .env
-# Edit DOLIBARR_BASE_URL and the MCP allowlists in .env.
+cp config.example.toml config.toml
+# Edit dolibarr_base_url and the MCP allowlists in config.toml.
 uv run dolibarr-mcp
 ```
 
 The server listens on `127.0.0.1:8000` by default. `dolibarr-mcp --help` and
-`dolibarr-mcp --version` do not require application configuration.
+`dolibarr-mcp --version` do not require application configuration. Use
+`dolibarr-mcp --config path/to/config.toml` to select another file explicitly.
 
 ## Docker and Compose
 
 ```bash
-docker build -t dolibarr-mcp-server:0.3.0 .
+docker build -t dolibarr-mcp-server:0.4.0 .
 docker run --rm --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m \
   -p 8000:8000 \
-  -e DOLIBARR_BASE_URL=https://erp.example.invalid/dolibarr \
-  -e HOST=0.0.0.0 \
-  -e MCP_ALLOWED_HOSTS=localhost:8000 \
-  dolibarr-mcp-server:0.3.0
+  --mount type=bind,src="$PWD/config.toml",dst=/app/config.toml,readonly \
+  dolibarr-mcp-server:0.4.0
 ```
 
-Or set `DOLIBARR_BASE_URL` in the operator environment and run `docker compose up --build`.
-Neither the image nor `compose.yaml` contains a user API key.
+For a container, set `host = "0.0.0.0"` and the external Host allowlist in `config.toml` before
+running Docker or `docker compose up --build`. Compose mounts that file read-only. Neither the
+image, Compose file, nor server configuration contains a user API key.
 
 ## Configuration
 
-| Variable | Default | Purpose |
+| `config.toml` key | Default | Purpose |
 | --- | --- | --- |
-| `DOLIBARR_BASE_URL` | required | Fixed HTTPS Dolibarr base URL, including any subdirectory |
-| `DOLIBARR_CA_BUNDLE` | unset | Optional private CA PEM file |
-| `HOST` | `127.0.0.1` | Uvicorn bind host |
-| `PORT` | `8000` | Uvicorn bind port |
-| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL` |
-| `MCP_ALLOWED_HOSTS` | loopback only | Comma-separated exact `Host` values; localhost `:*` is accepted for development |
-| `MCP_ALLOWED_ORIGINS` | empty | Comma-separated exact browser Origins; empty rejects requests carrying Origin |
-| `DOLIBARR_CONNECT_TIMEOUT` | `5` | Connection timeout in seconds |
-| `DOLIBARR_READ_TIMEOUT` | `10` | Read timeout in seconds |
-| `DOLIBARR_WRITE_TIMEOUT` | `10` | Write timeout in seconds |
-| `DOLIBARR_POOL_TIMEOUT` | `5` | Pool acquisition timeout in seconds |
-| `DOLIBARR_MAX_CONNECTIONS` | `100` | Maximum shared upstream connections |
-| `DOLIBARR_MAX_KEEPALIVE_CONNECTIONS` | `20` | Maximum idle keep-alive connections |
-| `ALLOW_INSECURE_LOCALHOST` | `false` | Permit HTTP only for literal loopback development URLs |
+| `dolibarr_base_url` | required | Fixed HTTPS Dolibarr base URL, including any subdirectory |
+| `dolibarr_ca_bundle` | unset | Optional private CA PEM path, relative to the config file or absolute |
+| `host` | `127.0.0.1` | Uvicorn bind host |
+| `port` | `8000` | Uvicorn bind port |
+| `log_level` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL` |
+| `mcp_allowed_hosts` | loopback list | Exact `Host` values; localhost `:*` is accepted for development |
+| `mcp_allowed_origins` | empty list | Exact browser Origins; empty rejects requests carrying Origin |
+| `dolibarr_connect_timeout` | `5` | Connection timeout in seconds |
+| `dolibarr_read_timeout` | `10` | Read timeout in seconds |
+| `dolibarr_write_timeout` | `10` | Write timeout in seconds |
+| `dolibarr_pool_timeout` | `5` | Pool acquisition timeout in seconds |
+| `dolibarr_max_connections` | `100` | Maximum shared upstream connections |
+| `dolibarr_max_keepalive_connections` | `20` | Maximum idle keep-alive connections |
+| `[dolibarr_lead_stage_catalog.<CODE>]` | empty | Optional verified stage rows with ID, label, aliases, percentage, position, and activity |
+| `allow_insecure_localhost` | `false` | Permit HTTP only for literal loopback development URLs |
 
-There is deliberately no server-side `DOLIBARR_API_KEY` setting.
+The server does not load `.env` or application settings from process environment variables.
+There is deliberately no server-side `DOLIBARR_API_KEY` setting. A client may keep its own API key
+in a secret environment variable and interpolate it into the request header shown below.
 
 ## Configure an MCP client
 
@@ -181,6 +185,7 @@ classification.
 | `dolibarr_thirdparty_get` | `thirdparty_id` | Allowlisted third-party details and bounded notes |
 | `dolibarr_user_search` | optional `query` | Active users safe to select for lead assignment |
 | `dolibarr_lead_search` | optional query, third party, stage, state, owner | Only projects with `usage_opportunity=1` |
+| `dolibarr_lead_stage_list` | optional stage-code or ID `query` | Operator-configured plus observed stage ID/code pairs, explicitly incomplete |
 | `dolibarr_lead_get` | `project_id` | Lead data, sales stage, project state, and `PROJECTLEADER` owners |
 
 Leave reads also use fixed official endpoints and local filtering. Results include only typed
@@ -202,11 +207,10 @@ token to write. The server re-reads the current API state and rejects a missing 
 | `dolibarr_thirdparty_update` | Update only allowlisted company fields |
 | `dolibarr_lead_create` | Create a draft project with `usage_opportunity=1`, existing third party, and stage |
 | `dolibarr_lead_update` | Update lead facts without changing its control fields |
-| `dolibarr_lead_change_status` | Change only the opportunity-stage identifier |
+| `dolibarr_lead_change_status` | Change the opportunity stage using exactly one `stage_id` or resolvable `stage_code` |
 | `dolibarr_lead_assign` | Replace internal `PROJECTLEADER` relations with one active user |
 | `dolibarr_lead_open_project` | Validate a draft project or reopen a closed one |
-
-`customer_status` accepts `neutral`, `customer`, `prospect`, or `customer_and_prospect`. Create a
+| `dolibarr_lead_close_project` | Set an open lead project's lifecycle state to closed with an explicit REST-semantics warning |
 | `dolibarr_leave_request_create` | Create a draft request; Dolibarr validates balance and overlap |
 | `dolibarr_leave_request_update` | Update allowlisted fields only while the request is draft |
 | `dolibarr_leave_request_submit` | Move a draft request to submitted |
@@ -214,12 +218,38 @@ token to write. The server re-reads the current API state and rejects a missing 
 | `dolibarr_leave_request_refuse` | Refuse a submitted request with a required reason |
 | `dolibarr_leave_request_cancel` | Cancel a submitted or approved request |
 | `dolibarr_leave_request_reopen` | Reopen a canceled request to submitted |
+
+`customer_status` accepts `neutral`, `customer`, `prospect`, or `customer_and_prospect`. Create a
 third party intended for a new lead with `customer_status="prospect"`, then pass its returned ID to
-`dolibarr_lead_create`. Lead creation leaves the project in draft. Opening it is a separate,
-confirmed call.
+`dolibarr_lead_create`. Lead creation leaves the project in draft. Opening and closing it are
+separate confirmed calls.
 
-## Health and operations
+Dolibarr 23.0.3 does not expose its complete opportunity-stage dictionary through REST. Configure
+stages only after verifying their values in the target Dolibarr installation. Use the canonical
+Dolibarr code as the table key and keep business shorthand in `aliases`, for example:
 
+```toml
+[dolibarr_lead_stage_catalog.LOST]
+id = 7
+label = "P3L - Lost"
+aliases = ["P3L"]
+percent = 0
+position = 70
+active = true
+```
+
+`dolibarr_lead_stage_list` merges that trusted operator catalog with stages observed on accessible
+leads and exposes configured metadata. `dolibarr_lead_change_status` accepts either the numeric
+`stage_id` or a canonical code/alias in `stage_code`; configured resolution prefers the operator
+catalog and otherwise requires exactly one observed match. A configured inactive stage is rejected
+whether selected by code, alias, or ID. The list remains `complete=false`, so an empty result is
+never presented as a complete Dolibarr dictionary.
+
+Dolibarr 23.0.3 has no dedicated project-close REST action. The close tool therefore uses the
+official fixed project update endpoint with the sole payload `{"status": 2}`, re-reads the lead,
+and reports `partial` unless the closed state is visible. Every preview and result warns that this
+path does not guarantee `PROJECT_CLOSE` triggers, closing-user/date metadata, or GUI-equivalent
+semantics.
 
 Leave-request status transitions are deliberately constrained:
 `draft -> submitted -> approved|refused`, `submitted|approved -> canceled`, and
@@ -232,6 +262,9 @@ balance, overlap, or module policy; the preview calls this out before confirmati
 - `start_afternoon_end_afternoon`;
 - `start_morning_end_morning`;
 - `start_afternoon_end_morning`.
+
+## Health and operations
+
 ```bash
 curl --fail http://127.0.0.1:8000/health/live
 curl --fail http://127.0.0.1:8000/health/ready
@@ -240,7 +273,7 @@ curl --fail http://127.0.0.1:8000/health/ready
 Health probes never contact Dolibarr. Production deployments must terminate TLS at a trusted
 reverse proxy or ingress, preserve an allowlisted `Host`, reject oversized requests, apply rate
 limits, and avoid logging authorization headers. The application does not trust `X-Forwarded-*`
-headers. CORS is not enabled; `MCP_ALLOWED_ORIGINS` only validates an Origin if a browser sends one.
+headers. CORS is not enabled; `mcp_allowed_origins` only validates an Origin if a browser sends one.
 
 ## Development and quality gates
 
@@ -271,10 +304,13 @@ See [development.md](docs/development.md) for the clean-wheel, workflow, and con
 - global reports use bounded fan-out because Dolibarr 23 has no global paginated time-entry API;
   requests fail explicitly beyond 1000 accessible tasks or 50,000 time lines.
 - sales search uses bounded API pagination and never accepts `sqlfilters`;
-- sales writes exclude extrafields, bank data, personal contacts, arbitrary payload fields,
-  project closing, and returning a project to draft;
-- Dolibarr 23.0.3 has no official endpoint exposing the complete lead-stage dictionary, so callers
-  obtain `stage_id` from existing accessible leads or their Dolibarr configuration;
+- sales writes exclude extrafields, bank data, personal contacts, arbitrary payload fields, and
+  returning a project to draft;
+- Dolibarr 23.0.3 has no official endpoint exposing the complete lead-stage dictionary; the stage
+  tool merges the optional verified operator catalog with ID/code pairs observed on accessible
+  leads and marks the result incomplete;
+- project closing uses a fixed generic update because Dolibarr 23.0.3 lacks a dedicated close REST
+  action; close triggers and close audit metadata are not guaranteed and are warned before apply;
 - multi-call owner replacement is not transactional; a partial result returns the refreshed state.
 
 Rotate and revoke user keys in Dolibarr. Report vulnerabilities privately as described in
