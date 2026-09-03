@@ -55,6 +55,11 @@ approver, type, dates, half-day mode, status, description, and refusal reason. A
 fields are ignored during validation and cannot reach tool results. Search and aggregate tools
 omit notes.
 
+The upstream project projection normalizes `description` to a maximum of 65,535 UTF-8 bytes at a
+complete character boundary before schema validation. This prevents one overlong text field from
+invalidating a paged sales read while retaining a hard memory bound. Public lead details and
+caller-supplied write values remain limited to 4000 characters.
+
 Callers can supply inclusive dates, positive object identifiers, one fixed aggregation dimension,
 and bounded paging values. They cannot supply upstream hosts, paths, headers, query languages, or
 arbitrary `sqlfilters`. Global reporting reads at most 1000 accessible tasks and 50,000 time lines;
@@ -88,8 +93,9 @@ The token is a workflow and stale-state guard, not a credential or replacement f
 authorization. Callers already holding the API key could call Dolibarr directly.
 
 Third-party and lead creates use fixed POSTs. Partial field edits and resolved sales-stage changes
-use fixed PUTs. A stage change re-reads the lead and returns `partial` unless the requested numeric
-ID is visible. Draft validation and reopening use `POST /projects/{id}/validate`. Owner replacement first
+use fixed PUTs; stage changes submit only the project REST property `opp_status`. A stage change
+re-reads the lead and returns `partial` unless the requested numeric ID is visible. Draft validation
+and reopening use `POST /projects/{id}/validate`. Owner replacement first
 adds the desired internal `PROJECTLEADER`, then removes previous relations. Because Dolibarr offers
 no transaction spanning those calls, the tool reports `partial` and refreshes the lead when a later
 step fails. Writes are never automatically retried.

@@ -371,7 +371,7 @@ async def test_confirmed_sales_write_crosses_auth_and_uses_request_key(
     assert all(token == "fake-token-A" for _method, _path, token in calls)
 
 
-async def test_stage_lookup_and_confirmed_project_close_cross_auth(
+async def test_confirmed_stage_change_and_project_close_cross_auth(  # noqa: PLR0915
     settings: Settings,
 ) -> None:
     settings = settings.model_copy(
@@ -391,19 +391,22 @@ async def test_stage_lookup_and_confirmed_project_close_cross_auth(
     calls: list[tuple[str, str, str]] = []
     closed = False
 
+    stage = 6
+
     def lead_payload() -> dict[str, object]:
         return {
             "id": 10,
             "ref": "L-10",
             "title": "Axians Lead",
             "usage_opportunity": 1,
-            "fk_opp_status": 7,
-            "opp_status_code": "LOST",
+            "fk_opp_status": None,
+            "opp_status": stage,
+            "opp_status_code": "WON" if stage == 6 else "LOST",
             "status": 2 if closed else 1,
         }
 
     async def handler(request: httpx2.Request) -> httpx2.Response:
-        nonlocal closed
+        nonlocal closed, stage
         path = request.url.path
         token = request.headers.get("DOLAPIKEY", "")
         calls.append((request.method, path, token))
@@ -416,8 +419,12 @@ async def test_stage_lookup_and_confirmed_project_close_cross_auth(
         if path.endswith("/projects/10") and request.method == "GET":
             return httpx2.Response(200, json=lead_payload())
         if path.endswith("/projects/10") and request.method == "PUT":
-            assert request.content == b'{"status":2}'
-            closed = True
+            if request.content == b'{"opp_status":7}':
+                stage = 7
+            elif request.content == b'{"status":2}':
+                closed = True
+            else:
+                raise AssertionError(request.content)
             return httpx2.Response(200, json=lead_payload())
         raise AssertionError((request.method, path))
 
@@ -433,7 +440,21 @@ async def test_stage_lookup_and_confirmed_project_close_cross_auth(
                 "dolibarr_lead_change_status",
                 {"project_id": 10, "stage_code": "P3L"},
             )
-            preview = await mcp_client.call_tool("dolibarr_lead_close_project", {"project_id": 10})
+            assert status_preview.structured_content is not None
+            status_token = status_preview.structured_content["confirmation_token"]
+            status_applied = await mcp_client.call_tool(
+                "dolibarr_lead_change_status",
+                {
+                    "project_id": 10,
+                    "stage_code": "P3L",
+                    "apply": True,
+                    "confirmation_token": status_token,
+                },
+            )
+            preview = await mcp_client.call_tool(
+                "dolibarr_lead_close_project",
+                {"project_id": 10},
+            )
             assert preview.structured_content is not None
             token = preview.structured_content["confirmation_token"]
             applied = await mcp_client.call_tool(
@@ -448,12 +469,18 @@ async def test_stage_lookup_and_confirmed_project_close_cross_auth(
     assert stages.structured_content["rows"][0]["aliases"] == ["P3L"]
     assert stages.structured_content["rows"][0]["configured"] is True
     assert status_preview.structured_content is not None
-    assert status_preview.structured_content["changes"] == []
+    assert status_preview.structured_content["changes"][0]["after"] == 7
+    assert status_applied.structured_content is not None
+    assert status_applied.structured_content["outcome"] == "applied"
+    assert status_applied.structured_content["lead"]["stage_id"] == 7
     assert applied.structured_content is not None
     assert applied.structured_content["outcome"] == "applied"
     assert applied.structured_content["lead"]["project_state"] == "closed"
     writes = [call for call in calls if call[0] == "PUT"]
-    assert writes == [("PUT", "/dolibarr/api/index.php/projects/10", "fake-token-A")]
+    assert writes == [
+        ("PUT", "/dolibarr/api/index.php/projects/10", "fake-token-A"),
+        ("PUT", "/dolibarr/api/index.php/projects/10", "fake-token-A"),
+    ]
     assert all(call_token == "fake-token-A" for _method, _path, call_token in calls)
 
 

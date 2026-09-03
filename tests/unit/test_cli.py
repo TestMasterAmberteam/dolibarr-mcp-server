@@ -62,7 +62,7 @@ def test_version_does_not_require_server_configuration(capsys: pytest.CaptureFix
     with pytest.raises(SystemExit) as captured:
         main(["--version"])
     assert captured.value.code == 0
-    assert capsys.readouterr().out.strip() == "dolibarr-mcp 0.4.0"
+    assert capsys.readouterr().out.strip() == "dolibarr-mcp 0.4.1"
 
 
 def test_missing_required_configuration_exits_safely(

@@ -78,11 +78,11 @@ The server listens on `127.0.0.1:8000` by default. `dolibarr-mcp --help` and
 ## Docker and Compose
 
 ```bash
-docker build -t dolibarr-mcp-server:0.4.0 .
+docker build -t dolibarr-mcp-server:0.4.1 .
 docker run --rm --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m \
   -p 8000:8000 \
   --mount type=bind,src="$PWD/config.toml",dst=/app/config.toml,readonly \
-  dolibarr-mcp-server:0.4.0
+  dolibarr-mcp-server:0.4.1
 ```
 
 For a container, set `host = "0.0.0.0"` and the external Host allowlist in `config.toml` before
@@ -177,7 +177,10 @@ return notes, truncated to 4000 characters.
 
 Sales reads use only fixed official Dolibarr REST endpoints. A lead is a project whose
 `usage_opportunity` flag is set; it is not inferred from the third party's `prospect`
-classification.
+classification. Incoming project descriptions are normalized to at most 65,535 UTF-8 bytes before
+typed validation; excess content is truncated at a complete character boundary instead of
+rejecting the entire project page. Search results still omit descriptions, lead details truncate
+them to 4000 characters, and create/update inputs retain their 4000-character limit.
 
 | Read-only tool | Main arguments | Result |
 | --- | --- | --- |
@@ -274,6 +277,13 @@ Health probes never contact Dolibarr. Production deployments must terminate TLS 
 reverse proxy or ingress, preserve an allowlisted `Host`, reject oversized requests, apply rate
 limits, and avoid logging authorization headers. The application does not trust `X-Forwarded-*`
 headers. CORS is not enabled; `mcp_allowed_origins` only validates an Origin if a browser sends one.
+
+Invalid Dolibarr statuses, JSON, and typed payloads still produce the same generic MCP error. The
+server also writes one `WARNING` event named `upstream_response_invalid`, correlated by the normal
+request ID. It contains only a fixed failure category, HTTP method, status, fixed schema name, and
+for schema failures at most 20 validation field locations and error types. It never includes the
+upstream URL, path, query, headers, response body, rejected values, object IDs, user identity, or
+exception text.
 
 ## Development and quality gates
 

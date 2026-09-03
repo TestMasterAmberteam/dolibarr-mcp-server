@@ -752,7 +752,7 @@ class SalesService:
             {
                 "ref": "auto",
                 "usage_opportunity": 1,
-                "fk_opp_status": data.stage_id,
+                "opp_status": data.stage_id,
                 "status": 0,
             }
         )
@@ -864,7 +864,7 @@ class SalesService:
         await self._client.update_project(
             api_key,
             project_id,
-            {"fk_opp_status": resolved_stage_id},
+            {"opp_status": resolved_stage_id},
         )
         detail = await self.lead_get(api_key, project_id)
         if detail.stage_id != resolved_stage_id:

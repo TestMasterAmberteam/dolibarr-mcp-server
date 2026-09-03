@@ -13,8 +13,10 @@ account, database access, arbitrary REST proxy, credential cache, or misleading 
 lead.
 
 In Dolibarr 23.0.3, the Lead checkbox on a project is represented by `usage_opportunity=1`.
-Opportunity stage (`fk_opp_status`) and project lifecycle state are separate. The third party's
-customer classification can independently be `prospect`; it does not define whether a project is a
+The REST project object exposes opportunity stage as `opp_status`; Dolibarr persists it in the
+`fk_opp_status` database column. Opportunity stage and project lifecycle state are separate. The
+third party's customer classification can independently be `prospect`; it does not define whether
+a project is a
 lead.
 
 MCP write calls can be generated incorrectly or against a record that changed after it was read.
@@ -63,7 +65,8 @@ The status-change tool accepts exactly one numeric `stage_id` or bounded `stage_
 prefers a canonical code or alias from the immutable operator catalog, otherwise it requires exactly
 one matching ID observed on accessible leads. A configured inactive stage is rejected whether
 selected by identifier or numeric ID. Missing or ambiguous codes fail before preview. The resolved
-numeric ID and canonical code are bound into the preview token; only `fk_opp_status` is written.
+numeric ID and canonical code are bound into the preview token; only the REST property `opp_status`
+is submitted, which Dolibarr persists as `fk_opp_status`.
 The post-write reread must expose the resolved ID, otherwise the result is `partial`.
 
 Dolibarr 23.0.3 also has no dedicated project-close REST action, although the general project PUT

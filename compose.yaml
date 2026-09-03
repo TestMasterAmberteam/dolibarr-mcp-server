@@ -2,7 +2,7 @@ services:
   dolibarr-mcp:
     build:
       context: .
-    image: dolibarr-mcp-server:0.4.0
+    image: dolibarr-mcp-server:0.4.1
     volumes:
       - ./config.toml:/app/config.toml:ro
     ports:

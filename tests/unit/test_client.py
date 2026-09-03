@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import ssl
 from pathlib import Path
 
@@ -144,6 +145,135 @@ async def test_invalid_success_payload_is_bad_gateway(settings: Settings, payloa
     async with DolibarrClient(settings, transport=transport) as client:
         with pytest.raises(InvalidDolibarrResponseError):
             await client.get_current_user("fake-key")
+
+
+async def test_invalid_json_logs_category_without_response_content(
+    settings: Settings,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    transport = httpx2.MockTransport(
+        lambda _request: httpx2.Response(
+            200,
+            content=b"not-json fake-key-supersecret",
+            headers={"content-type": "application/json"},
+        )
+    )
+    with caplog.at_level(logging.WARNING, logger="dolibarr_mcp.upstream"):
+        async with DolibarrClient(settings, transport=transport) as client:
+            with pytest.raises(InvalidDolibarrResponseError) as captured:
+                await client.get_current_user("fake-key-supersecret")
+
+    assert str(captured.value) == "Dolibarr returned an invalid response."
+    messages = [
+        record.getMessage() for record in caplog.records if record.name == "dolibarr_mcp.upstream"
+    ]
+    assert messages == [
+        "upstream_response_invalid kind=invalid_json method=GET status=200 schema=identity"
+    ]
+    assert "supersecret" not in messages[0]
+    assert "not-json" not in messages[0]
+
+
+@pytest.mark.parametrize(
+    ("status_code", "kind"),
+    [(400, "client_status"), (300, "unexpected_status")],
+)
+async def test_invalid_status_logs_only_bounded_metadata(
+    settings: Settings,
+    caplog: pytest.LogCaptureFixture,
+    status_code: int,
+    kind: str,
+) -> None:
+    transport = httpx2.MockTransport(
+        lambda _request: httpx2.Response(
+            status_code,
+            content=b"response-content fake-key-supersecret",
+        )
+    )
+    with caplog.at_level(logging.WARNING, logger="dolibarr_mcp.upstream"):
+        async with DolibarrClient(settings, transport=transport) as client:
+            with pytest.raises(InvalidDolibarrResponseError):
+                await client.get_current_user("fake-key-supersecret")
+
+    messages = [
+        record.getMessage() for record in caplog.records if record.name == "dolibarr_mcp.upstream"
+    ]
+    assert messages == [
+        f"upstream_response_invalid kind={kind} method=GET status={status_code} schema=identity"
+    ]
+    assert "response-content" not in messages[0]
+    assert "supersecret" not in messages[0]
+
+
+async def test_schema_validation_logs_bounded_locations_and_types(
+    settings: Settings,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret_value = "customer-secret fake-key-supersecret"
+    invalid_projects = [
+        {
+            "id": index + 1,
+            "ref": f"P-{index}",
+            "title": secret_value + ("x" * 256),
+        }
+        for index in range(25)
+    ]
+    transport = httpx2.MockTransport(lambda _request: httpx2.Response(200, json=invalid_projects))
+
+    with caplog.at_level(logging.WARNING, logger="dolibarr_mcp.upstream"):
+        async with DolibarrClient(settings, transport=transport) as client:
+            with pytest.raises(InvalidDolibarrResponseError):
+                await client.list_projects("fake-key-supersecret")
+
+    messages = [
+        record.getMessage() for record in caplog.records if record.name == "dolibarr_mcp.upstream"
+    ]
+    assert len(messages) == 1
+    message = messages[0]
+    assert message.startswith(
+        "upstream_response_invalid kind=schema_validation method=GET status=200 "
+        "schema=project_list error_count=25 errors="
+    )
+    assert "0.title:string_too_long" in message
+    assert "19.title:string_too_long" in message
+    assert "20.title:string_too_long" not in message
+    assert message.endswith("truncated=true")
+    assert secret_value not in message
+    assert "supersecret" not in message
+
+
+async def test_project_descriptions_are_truncated_to_the_dolibarr_text_byte_limit(
+    settings: Settings,
+) -> None:
+    byte_limit = (1 << 16) - 1
+    exact_description = "x" * byte_limit
+    oversized_ascii = exact_description + "x"
+    oversized_multibyte = "ą" * ((byte_limit // 2) + 1)
+    transport = httpx2.MockTransport(
+        lambda _request: httpx2.Response(
+            200,
+            json=[
+                {"id": 1, "ref": "P-1", "title": "Exact", "description": exact_description},
+                {"id": 2, "ref": "P-2", "title": "ASCII", "description": oversized_ascii},
+                {
+                    "id": 3,
+                    "ref": "P-3",
+                    "title": "Multibyte",
+                    "description": oversized_multibyte,
+                },
+            ],
+        )
+    )
+
+    async with DolibarrClient(settings, transport=transport) as client:
+        projects = await client.list_projects("fake-key")
+
+    assert projects[0].description == exact_description
+    assert projects[1].description == exact_description
+    assert projects[2].description == oversized_multibyte[:-1]
+    assert all(
+        len((project.description or "").encode("utf-8")) <= byte_limit for project in projects
+    )
 
 
 @pytest.mark.parametrize(
@@ -333,7 +463,8 @@ async def test_sales_client_uses_only_fixed_api_routes_and_payloads(settings: Se
                         "ref": "PJ-10",
                         "title": "Lead",
                         "usage_opportunity": 1,
-                        "fk_opp_status": 7,
+                        "fk_opp_status": None,
+                        "opp_status": 7,
                         "opp_status_code": "LOST",
                     }
                 ],
@@ -360,6 +491,7 @@ async def test_sales_client_uses_only_fixed_api_routes_and_payloads(settings: Se
             return httpx2.Response(200, json={"success": {"code": 200}})
         if path.endswith("/projects/10"):
             status = 2 if request.content == b'{"status":2}' else 1
+            stage = 4 if request.content == b'{"opp_status":4}' else 7
             return httpx2.Response(
                 200,
                 json={
@@ -368,6 +500,8 @@ async def test_sales_client_uses_only_fixed_api_routes_and_payloads(settings: Se
                     "title": "Lead",
                     "usage_opportunity": 1,
                     "status": status,
+                    "fk_opp_status": None,
+                    "opp_status": stage,
                 },
             )
         if path.endswith("/users/7"):
@@ -388,7 +522,7 @@ async def test_sales_client_uses_only_fixed_api_routes_and_payloads(settings: Se
         created_project = await client.create_project(
             "sales-key", {"ref": "auto", "title": "New Lead"}
         )
-        updated_project = await client.update_project("sales-key", 10, {"fk_opp_status": 4})
+        updated_project = await client.update_project("sales-key", 10, {"opp_status": 4})
         contacts = await client.get_project_contacts("sales-key", 10)
         await client.add_project_leader("sales-key", 10, 7)
         await client.delete_project_leader("sales-key", 10, 7)
@@ -403,6 +537,7 @@ async def test_sales_client_uses_only_fixed_api_routes_and_payloads(settings: Se
     assert created_project == 20
     assert updated_project.project_id == 10
     assert contacts[0].row_id == 70
+    assert updated_project.stage_id == 4
     assert selected_user.login == "alice"
     assert all(request.headers["DOLAPIKEY"] == "sales-key" for request in seen)
     assert all("Authorization" not in request.headers for request in seen)
@@ -414,6 +549,12 @@ async def test_sales_client_uses_only_fixed_api_routes_and_payloads(settings: Se
     )
     assert create_request.content == b'{"name":"New","client":2}'
     assert all("sqlfilters" not in request.url.params for request in seen)
+    update_request = next(
+        request
+        for request in seen
+        if request.method == "PUT" and request.url.path.endswith("/projects/10")
+    )
+    assert update_request.content == b'{"opp_status":4}'
 
 
 async def test_stage_observations_and_close_use_minimal_fixed_project_calls(
@@ -430,7 +571,8 @@ async def test_stage_observations_and_close_use_minimal_fixed_project_calls(
                     {
                         "id": 10,
                         "usage_opportunity": 1,
-                        "fk_opp_status": 7,
+                        "fk_opp_status": None,
+                        "opp_status": 7,
                         "opp_status_code": "LOST",
                     }
                 ],
@@ -460,7 +602,7 @@ async def test_stage_observations_and_close_use_minimal_fixed_project_calls(
     assert stages[0].stage_code == "LOST"
     assert closed_project.status == 2
     assert seen[0].url.params["properties"] == (
-        "id,usage_opportunity,fk_opp_status,opp_status,opp_status_code"
+        "id,usage_opportunity,opp_status,fk_opp_status,opp_status_code"
     )
     assert all(request.headers["DOLAPIKEY"] == "sales-key" for request in seen)
     assert all("sqlfilters" not in request.url.params for request in seen)

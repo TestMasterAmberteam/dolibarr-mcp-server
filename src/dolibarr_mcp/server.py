@@ -10,6 +10,7 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.types import ToolAnnotations
 from pydantic import Field, ValidationError
 
+from dolibarr_mcp import __version__
 from dolibarr_mcp.credentials import get_request_api_key
 from dolibarr_mcp.leave_requests import LeaveRequestService
 from dolibarr_mcp.models import (
@@ -123,7 +124,7 @@ def create_mcp_server(
     server: MCPServer[None] = MCPServer(
         name="dolibarr-mcp-server",
         description="Stateless, per-user access to Dolibarr ERP.",
-        version="0.4.0",
+        version=__version__,
     )
     reporting = TimeReportingService(client)
     sales = SalesService(client, lead_stage_catalog=lead_stage_catalog)

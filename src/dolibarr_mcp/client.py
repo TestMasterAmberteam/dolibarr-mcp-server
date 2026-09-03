@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+import re
 import ssl
 from email.utils import parsedate_to_datetime
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Literal, Self, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, Self, TypeVar
 
 import httpx2
 from pydantic import TypeAdapter, ValidationError
@@ -51,6 +53,11 @@ _MAX_TIME_LINES = 50_000
 _MAX_SALES_RECORDS = 10_000
 _MAX_LEAVE_REQUESTS = 10_000
 _MAX_LEAVE_TYPES = 1_000
+_MAX_VALIDATION_DIAGNOSTICS = 20
+_MAX_DIAGNOSTIC_TOKEN_LENGTH = 64
+_UNSAFE_DIAGNOSTIC_CHARACTER = re.compile(r"[^A-Za-z0-9_-]")
+
+_LOGGER = logging.getLogger("dolibarr_mcp.upstream")
 
 T = TypeVar("T")
 
@@ -71,7 +78,87 @@ _THIRDPARTY_LIST_ADAPTER = TypeAdapter(list[DolibarrThirdpartyPayload])
 _INTEGER_ADAPTER = TypeAdapter(int)
 _ANY_ADAPTER = TypeAdapter(object)
 
+_SCHEMA_NAMES = {
+    id(_IDENTITY_ADAPTER): "identity",
+    id(_LEAVE_ADAPTER): "leave_request",
+    id(_LEAVE_LIST_ADAPTER): "leave_request_list",
+    id(_LEAVE_TYPE_LIST_ADAPTER): "leave_type_list",
+    id(_LEAD_STAGE_OBSERVATION_LIST_ADAPTER): "lead_stage_observation_list",
+    id(_PROJECT_ADAPTER): "project",
+    id(_PROJECT_LIST_ADAPTER): "project_list",
+    id(_PROJECT_CONTACT_LIST_ADAPTER): "project_contact_list",
+    id(_TASK_ADAPTER): "task",
+    id(_TASK_LIST_ADAPTER): "task_list",
+    id(_TIME_LIST_ADAPTER): "time_entry_list",
+    id(_USER_LIST_ADAPTER): "user_list",
+    id(_THIRDPARTY_ADAPTER): "thirdparty",
+    id(_THIRDPARTY_LIST_ADAPTER): "thirdparty_list",
+    id(_INTEGER_ADAPTER): "integer",
+    id(_ANY_ADAPTER): "untyped",
+}
+
 HttpMethod = Literal["GET", "POST", "PUT", "DELETE"]
+InvalidResponseKind = Literal[
+    "client_status", "unexpected_status", "invalid_json", "schema_validation"
+]
+
+
+def _diagnostic_token(value: object) -> str:
+    """Return one bounded, log-safe token without rendering arbitrary values."""
+    if isinstance(value, int):
+        return str(value)
+    if not isinstance(value, str):
+        return "unknown"
+    sanitized = _UNSAFE_DIAGNOSTIC_CHARACTER.sub("_", value)
+    return sanitized[:_MAX_DIAGNOSTIC_TOKEN_LENGTH] or "unknown"
+
+
+def _validation_diagnostics(error: ValidationError) -> tuple[int, str, bool]:
+    """Summarize only validation locations and types, never inputs or context."""
+    errors = error.errors(
+        include_url=False,
+        include_context=False,
+        include_input=False,
+    )
+    rendered = []
+    for item in errors[:_MAX_VALIDATION_DIAGNOSTICS]:
+        location = ".".join(_diagnostic_token(part) for part in item.get("loc", ()))
+        error_type = _diagnostic_token(item.get("type"))
+        rendered.append(f"{location or 'root'}:{error_type}")
+    return len(errors), ",".join(rendered), len(errors) > _MAX_VALIDATION_DIAGNOSTICS
+
+
+def _log_invalid_response(
+    *,
+    kind: InvalidResponseKind,
+    method: HttpMethod,
+    status_code: int,
+    adapter: TypeAdapter[Any],
+    validation_error: ValidationError | None = None,
+) -> None:
+    """Log bounded code-owned metadata for an invalid upstream response."""
+    schema_name = _SCHEMA_NAMES.get(id(adapter), "unknown")
+    if validation_error is None:
+        _LOGGER.warning(
+            "upstream_response_invalid kind=%s method=%s status=%d schema=%s",
+            kind,
+            method,
+            status_code,
+            schema_name,
+        )
+        return
+    error_count, errors, truncated = _validation_diagnostics(validation_error)
+    _LOGGER.warning(
+        "upstream_response_invalid kind=%s method=%s status=%d schema=%s "
+        "error_count=%d errors=%s truncated=%s",
+        kind,
+        method,
+        status_code,
+        schema_name,
+        error_count,
+        errors,
+        str(truncated).lower(),
+    )
 
 
 def validated_retry_after(response: httpx2.Response) -> str | None:
@@ -457,7 +544,7 @@ class DolibarrClient:
         """Return accessible project metadata for lead lookup within a fixed bound."""
         rows: list[DolibarrProjectPayload] = []
         properties = (
-            "id,ref,title,socid,fk_soc,status,usage_opportunity,fk_opp_status,opp_status,"
+            "id,ref,title,socid,fk_soc,status,usage_opportunity,opp_status,fk_opp_status,"
             "opp_status_code,description,opp_amount,opp_percent,date_start,date_end,"
             "note_public,note_private,tms,date_modification"
         )
@@ -479,7 +566,7 @@ class DolibarrClient:
     ) -> list[DolibarrLeadStageObservationPayload]:
         """Return minimal stage projections for accessible projects within a fixed bound."""
         rows: list[DolibarrLeadStageObservationPayload] = []
-        properties = "id,usage_opportunity,fk_opp_status,opp_status,opp_status_code"
+        properties = "id,usage_opportunity,opp_status,fk_opp_status,opp_status_code"
         for page in range(_MAX_SALES_RECORDS // _UPSTREAM_PAGE_SIZE):
             current = await self._get_api(
                 api_key,
@@ -680,11 +767,40 @@ class DolibarrClient:
         }:
             raise DolibarrWriteRejectedError
         if HTTPStatus.BAD_REQUEST <= response.status_code <= _MAX_CLIENT_ERROR_STATUS:
+            _log_invalid_response(
+                kind="client_status",
+                method=method,
+                status_code=response.status_code,
+                adapter=adapter,
+            )
             raise InvalidDolibarrResponseError
         if not HTTPStatus.OK <= response.status_code <= _MAX_SUCCESS_STATUS:
+            _log_invalid_response(
+                kind="unexpected_status",
+                method=method,
+                status_code=response.status_code,
+                adapter=adapter,
+            )
             raise InvalidDolibarrResponseError
 
         try:
-            return adapter.validate_python(response.json())
-        except (ValueError, ValidationError):
+            payload = response.json()
+        except ValueError:
+            _log_invalid_response(
+                kind="invalid_json",
+                method=method,
+                status_code=response.status_code,
+                adapter=adapter,
+            )
+            raise InvalidDolibarrResponseError from None
+        try:
+            return adapter.validate_python(payload)
+        except ValidationError as error:
+            _log_invalid_response(
+                kind="schema_validation",
+                method=method,
+                status_code=response.status_code,
+                adapter=adapter,
+                validation_error=error,
+            )
             raise InvalidDolibarrResponseError from None

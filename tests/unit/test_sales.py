@@ -81,7 +81,8 @@ def project(
             "title": title,
             "socid": thirdparty_id,
             "usage_opportunity": int(lead),
-            "fk_opp_status": stage_id,
+            "fk_opp_status": None,
+            "opp_status": stage_id,
             "opp_status_code": stage_code,
             "status": status,
             "opp_amount": 1000,
@@ -273,7 +274,7 @@ class FakeSalesClient:
             "date_end": "date_end",
             "note_public": "public_note",
             "note_private": "private_note",
-            "fk_opp_status": "stage_id",
+            "opp_status": "stage_id",
         }
         updates = {mapping[key]: value for key, value in payload.items()}
         if self.stage_no_effect:
@@ -578,7 +579,7 @@ async def test_lead_create_is_a_draft_opportunity_project() -> None:
     payload = cast("dict[str, object]", fake.calls[-1][1])
     assert payload["ref"] == "auto"
     assert payload["usage_opportunity"] == 1
-    assert payload["fk_opp_status"] == 4
+    assert payload["opp_status"] == 4
     assert payload["status"] == 0
     assert isinstance(payload["date_start"], int)
 
@@ -682,7 +683,7 @@ async def test_lead_change_status_resolves_configured_or_observed_code() -> None
     assert isinstance(applied, MutationResult)
     assert applied.lead is not None
     assert applied.lead.stage_id == 17
-    assert ("update_project", {"fk_opp_status": 17}) in fake.calls
+    assert ("update_project", {"opp_status": 17}) in fake.calls
 
     observed_sales = service(FakeSalesClient())
     observed = await observed_sales.lead_change_status(

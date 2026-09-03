@@ -27,10 +27,31 @@ LeaveHalfDayMode = Literal[
     "start_afternoon_end_morning",
 ]
 MutationOutcome = Literal["applied", "no_op", "partial"]
+_DOLIBARR_TEXT_MAX_BYTES = (1 << 16) - 1
 
 
 def _blank_to_none(value: object) -> object:
     return None if value == "" else value
+
+
+def _bounded_utf8_text(value: object, *, max_bytes: int) -> object:
+    """Return text within a byte budget without leaving a partial UTF-8 character."""
+    if not isinstance(value, str):
+        return value
+    encoded = value.encode("utf-8", errors="replace")
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+
+def _prefer_project_opportunity_status(value: object) -> object:
+    """Prefer Dolibarr's API property while retaining a legacy-field fallback."""
+    if not isinstance(value, dict):
+        return value
+    normalized = dict(value)
+    opportunity_status = normalized.get("opp_status")
+    legacy_status = normalized.get("fk_opp_status")
+    if opportunity_status in (None, "") and legacy_status not in (None, ""):
+        normalized["opp_status"] = legacy_status
+    return normalized
 
 
 class DolibarrUserPayload(BaseModel):
@@ -148,11 +169,11 @@ class DolibarrProjectPayload(BaseModel):
     usage_opportunity: bool = False
     stage_id: int | None = Field(
         default=None,
-        validation_alias=AliasChoices("fk_opp_status", "opp_status"),
+        validation_alias=AliasChoices("opp_status", "fk_opp_status"),
         gt=0,
     )
     stage_code: str | None = Field(default=None, alias="opp_status_code", max_length=64)
-    description: str | None = Field(default=None, max_length=4000)
+    description: str | None = Field(default=None, max_length=_DOLIBARR_TEXT_MAX_BYTES)
     amount: float | None = Field(default=None, alias="opp_amount", ge=0)
     probability_percent: float | None = Field(default=None, alias="opp_percent", ge=0, le=100)
     date_start: int | None = Field(default=None, ge=0)
@@ -164,6 +185,12 @@ class DolibarrProjectPayload(BaseModel):
         validation_alias=AliasChoices("tms", "date_modification"),
         max_length=64,
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def prefer_project_opportunity_status(cls, value: object) -> object:
+        """Do not let an empty database-field alias hide the API stage value."""
+        return _prefer_project_opportunity_status(value)
 
     @field_validator(
         "thirdparty_id",
@@ -180,6 +207,12 @@ class DolibarrProjectPayload(BaseModel):
         """Treat Dolibarr's empty optional project values as absent."""
         return _blank_to_none(value)
 
+    @field_validator("description", mode="before")
+    @classmethod
+    def bounded_project_description(cls, value: object) -> object:
+        """Bound Dolibarr TEXT without rejecting an otherwise valid project page."""
+        return _bounded_utf8_text(value, max_bytes=_DOLIBARR_TEXT_MAX_BYTES)
+
 
 class DolibarrLeadStageObservationPayload(BaseModel):
     """Minimal project projection used to discover stages on accessible leads."""
@@ -190,10 +223,16 @@ class DolibarrLeadStageObservationPayload(BaseModel):
     usage_opportunity: bool = False
     stage_id: int | None = Field(
         default=None,
-        validation_alias=AliasChoices("fk_opp_status", "opp_status"),
+        validation_alias=AliasChoices("opp_status", "fk_opp_status"),
         gt=0,
     )
     stage_code: str | None = Field(default=None, alias="opp_status_code", max_length=64)
+
+    @model_validator(mode="before")
+    @classmethod
+    def prefer_project_opportunity_status(cls, value: object) -> object:
+        """Do not let an empty database-field alias hide the API stage value."""
+        return _prefer_project_opportunity_status(value)
 
     @field_validator("stage_id", "stage_code", mode="before")
     @classmethod

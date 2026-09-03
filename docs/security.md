@@ -72,6 +72,11 @@ Upstream sales objects are projected into separate typed allowlists. Searches ex
 labels and selected lead metadata but omit notes. Detail tools may return public and private notes
 only for records the caller can read, truncated to 4000 characters. Tool inputs cannot select a
 host, path, method, header, arbitrary payload property, extrafield, bank field, or personal contact.
+The incoming project-description field is first bounded to 65,535 UTF-8 bytes, matching the storage
+size class of Dolibarr's SQL `TEXT` column. Excess bytes and any incomplete trailing character are
+dropped before typed validation, so one oversized description cannot reject a complete search
+page. This larger upstream bound does not change the 4000-character detail-output or write-input
+limits.
 
 Every write defaults to a non-mutating preview. Applying it requires the preview's stateless token
 and the exact same normalized request while the allowlisted current state is unchanged. This

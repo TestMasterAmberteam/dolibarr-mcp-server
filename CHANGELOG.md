@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Bounded, request-correlated diagnostics for invalid upstream statuses, JSON, and typed payloads
+  without logging response content, credentials, identities, URLs, or query parameters (ADR 0006).
 - Project governance, security automation, and release preparation.
 - Read-only `dolibarr_my_time_report`, `dolibarr_project_time_report`,
   `dolibarr_task_timespent`, `dolibarr_time_summary`, and `dolibarr_time_entries` tools.
@@ -36,6 +38,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Corrected Dolibarr 23 opportunity-stage writes to submit the `opp_status` API property instead
+  of the `fk_opp_status` database-column name, and made reads prefer a non-empty `opp_status`
+  while retaining `fk_opp_status` as a compatibility fallback.
+- Prevented overlong Dolibarr project descriptions from invalidating a complete lead-search page
+  by truncating the upstream value to the SQL `TEXT`-aligned 65,535-byte UTF-8 boundary while
+  retaining 4000-character public-output and write-input limits (ADR 0007).
 - Delayed server-only imports so clean-wheel `--help` and `--version` checks need no dependencies.
 - Distinguished canonical Dolibarr lead-stage codes from business label prefixes and rejected
   configured inactive stages for both identifier- and ID-based status changes.
