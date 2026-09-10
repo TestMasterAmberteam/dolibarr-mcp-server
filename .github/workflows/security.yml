@@ -56,7 +56,10 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+      - name: Install pinned Gitleaks
+        run: GOBIN="$RUNNER_TEMP/bin" go install github.com/zricethezav/gitleaks/v8@v8.30.1
+      - name: Scan Git history for secrets
+        run: '"$RUNNER_TEMP/bin/gitleaks" git --redact --verbose .'
 
   workflow-audit:
     name: Workflow audit
@@ -73,7 +76,7 @@ jobs:
       - run: uv sync --locked --all-groups
       - name: Install pinned actionlint
         run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
-      - run: actionlint
+      - run: '"$(go env GOPATH)/bin/actionlint"'
       - run: uv run zizmor .
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
