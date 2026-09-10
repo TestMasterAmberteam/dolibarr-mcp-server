@@ -6,16 +6,13 @@ create a version tag merely to make the repository visible on GitHub.
 
 ## 1. Decide the public identity
 
-Before changing remote state, decide and record:
-
-- whether the commit author name and email in the complete Git history are suitable for public
-  disclosure;
-- a private contact method for Code of Conduct reports;
-- whether the Python package will later be published to PyPI.
+Before changing remote state, decide whether the Python package will later be published to PyPI.
 
 The confirmed GitHub organization login is `TestMasterAmberteam`, with the public organization
 name `AmberTeam Testing`. Canonical repository links in `pyproject.toml` and README workflow badges
-must use the login, not the display name.
+must use the login, not the display name. The commit author identity `Jan Sabak
+<jan.sabak@amberteam.pl>` is approved for public disclosure, and the same address is the confirmed
+private Code of Conduct contact.
 
 ## 2. Audit the complete Git history
 
