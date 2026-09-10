@@ -35,6 +35,13 @@ dependencies = [
   "uvicorn>=0.35,<1",
 ]
 
+[project.urls]
+Homepage = "https://github.com/TestMasterAmberteam/dolibarr-mcp-server"
+Documentation = "https://github.com/TestMasterAmberteam/dolibarr-mcp-server#readme"
+Repository = "https://github.com/TestMasterAmberteam/dolibarr-mcp-server.git"
+Issues = "https://github.com/TestMasterAmberteam/dolibarr-mcp-server/issues"
+Changelog = "https://github.com/TestMasterAmberteam/dolibarr-mcp-server/blob/main/CHANGELOG.md"
+
 [project.scripts]
 dolibarr-mcp = "dolibarr_mcp.__main__:main"
 

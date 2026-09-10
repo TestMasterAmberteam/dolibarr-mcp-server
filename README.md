@@ -1,5 +1,9 @@
 # dolibarr-mcp-server
 
+[![CI](https://github.com/TestMasterAmberteam/dolibarr-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/TestMasterAmberteam/dolibarr-mcp-server/actions/workflows/ci.yml)
+[![Security](https://github.com/TestMasterAmberteam/dolibarr-mcp-server/actions/workflows/security.yml/badge.svg)](https://github.com/TestMasterAmberteam/dolibarr-mcp-server/actions/workflows/security.yml)
+[![CodeQL](https://github.com/TestMasterAmberteam/dolibarr-mcp-server/actions/workflows/codeql.yml/badge.svg)](https://github.com/TestMasterAmberteam/dolibarr-mcp-server/actions/workflows/codeql.yml)
+
 A remote, stateless [Model Context Protocol](https://modelcontextprotocol.io/) server that
 authenticates each caller with that caller's own Dolibarr API key. It exposes 30 allowlisted tools
 for identity, time reporting, sales records, and leave requests while preserving

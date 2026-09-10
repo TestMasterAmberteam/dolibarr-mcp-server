@@ -8,25 +8,14 @@ create a version tag merely to make the repository visible on GitHub.
 
 Before changing remote state, decide and record:
 
-- the GitHub account or organization that will own the repository;
 - whether the commit author name and email in the complete Git history are suitable for public
   disclosure;
 - a private contact method for Code of Conduct reports;
 - whether the Python package will later be published to PyPI.
 
-After the owner is known, add canonical repository links to `pyproject.toml`:
-
-```toml
-[project.urls]
-Homepage = "https://github.com/OWNER/dolibarr-mcp-server"
-Documentation = "https://github.com/OWNER/dolibarr-mcp-server#readme"
-Repository = "https://github.com/OWNER/dolibarr-mcp-server.git"
-Issues = "https://github.com/OWNER/dolibarr-mcp-server/issues"
-Changelog = "https://github.com/OWNER/dolibarr-mcp-server/blob/main/CHANGELOG.md"
-```
-
-Replace `OWNER` with the exact selected account or organization. Do not publish owner-specific
-metadata until that decision is confirmed.
+The confirmed GitHub organization login is `TestMasterAmberteam`, with the public organization
+name `AmberTeam Testing`. Canonical repository links in `pyproject.toml` and README workflow badges
+must use the login, not the display name.
 
 ## 2. Audit the complete Git history
 
@@ -78,7 +67,7 @@ green GitHub Actions run.
 Authenticate GitHub CLI, then create the remote from the existing checkout:
 
 ```powershell
-$RepoOwner = "your-account-or-organization"
+$RepoOwner = "TestMasterAmberteam"
 $RepoName = "dolibarr-mcp-server"
 gh auth status
 gh repo create "$RepoOwner/$RepoName" --public --source . --remote origin --push --description "Stateless MCP server for per-user Dolibarr API access"
@@ -89,7 +78,7 @@ Do not ask GitHub to add a README, `.gitignore`, or license: all three already e
 GitHub CLI is not used, create an empty public repository in the browser, then run:
 
 ```powershell
-git remote add origin https://github.com/OWNER/dolibarr-mcp-server.git
+git remote add origin https://github.com/TestMasterAmberteam/dolibarr-mcp-server.git
 git remote -v
 git push -u origin main
 ```
