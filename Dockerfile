@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.7
 
-FROM ghcr.io/astral-sh/uv:0.12.5 AS uv-bin
+FROM ghcr.io/astral-sh/uv:0.12.12 AS uv-bin
 
-FROM python:3.12.11-slim-bookworm AS builder
+FROM python:3.14.7-slim-bookworm AS builder
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
@@ -15,7 +15,7 @@ COPY src ./src
 
 RUN uv sync --locked --no-dev --no-editable
 
-FROM python:3.12.11-slim-bookworm AS runtime
+FROM python:3.14.7-slim-bookworm AS runtime
 
 LABEL org.opencontainers.image.title="dolibarr-mcp-server" \
       org.opencontainers.image.description="Stateless per-user Dolibarr MCP server" \
