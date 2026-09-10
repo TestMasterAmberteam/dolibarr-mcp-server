@@ -5,6 +5,9 @@ authenticates each caller with that caller's own Dolibarr API key. It exposes 30
 for identity, time reporting, sales records, and leave requests while preserving
 Dolibarr's per-user permissions.
 
+This is an independent community project. It is not affiliated with, endorsed by, or maintained
+by the Dolibarr project or its maintainers.
+
 > **MVP status:** suitable for evaluation and controlled deployments. The project intentionally
 > has no local users, sessions, database, token cache, administrator key, or OAuth façade.
 
@@ -51,7 +54,8 @@ See [architecture](docs/architecture.md), [security design](docs/security.md), a
 [ADR 0002](docs/adr/0002-request-scoped-reporting-credentials.md) and
 [ADR 0003](docs/adr/0003-confirmed-api-only-sales-writes.md) plus
 [ADR 0004](docs/adr/0004-confirmed-api-only-leave-request-workflow.md) and
-[ADR 0005](docs/adr/0005-file-only-non-secret-configuration.md).
+[ADR 0005](docs/adr/0005-file-only-non-secret-configuration.md). The remaining accepted records
+are listed in [`docs/adr`](docs/adr/).
 
 ## Requirements
 
@@ -322,18 +326,19 @@ See [development.md](docs/development.md) for the clean-wheel, workflow, and con
 - project closing uses a fixed generic update because Dolibarr 23.0.3 lacks a dedicated close REST
   action; close triggers and close audit metadata are not guaranteed and are warned before apply;
 - multi-call owner replacement is not transactional; a partial result returns the refreshed state.
-
-Rotate and revoke user keys in Dolibarr. Report vulnerabilities privately as described in
-[SECURITY.md](SECURITY.md); never place credentials or exploit details in a public issue.
-
-## Community
 - leave searches process at most 10,000 accessible requests and never accept `sqlfilters`;
 - only drafts can be edited, status transitions use dedicated Dolibarr action endpoints, and no
   delete operation is exposed;
 - leave balance and negative-balance policy remain exclusively authoritative in Dolibarr.
 
+Rotate and revoke user keys in Dolibarr. Report vulnerabilities privately as described in
+[SECURITY.md](SECURITY.md); never place credentials or exploit details in a public issue.
+
+## Community
+
 - [Contributing](CONTRIBUTING.md)
 - [Support](SUPPORT.md)
 - [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Changelog](CHANGELOG.md)
+- [GitHub publication checklist](docs/github-publishing.md)
 - [MIT License](LICENSE)

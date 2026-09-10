@@ -4,8 +4,8 @@
 
 | Version | Supported |
 | --- | --- |
-| 0.1.x | Yes |
-| older or unreleased branches | No |
+| latest published `0.x` release | Yes |
+| older releases and unreleased branches | No |
 
 Security fixes are released on the latest supported line. Users should upgrade promptly and rotate
 any Dolibarr key that may have been exposed.

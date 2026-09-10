@@ -66,3 +66,9 @@ Tags use `vMAJOR.MINOR.PATCH` and must equal `project.version`. The release work
 checks the package, creates checksums and an SBOM, publishes a multi-architecture GHCR image, adds
 attestations, and creates a GitHub Release. PyPI publishing remains disabled unless maintainers
 configure Trusted Publishing, protect the `pypi` environment, and set `PUBLISH_TO_PYPI=true`.
+
+Before creating a tag, move the release notes from `Unreleased` to a dated version heading in
+`CHANGELOG.md` and verify that `pyproject.toml` and `dolibarr_mcp.__version__` agree. Repository
+owners must enable release immutability in GitHub settings before the first release if published
+artifacts are expected to be immutable. See the [GitHub publication checklist](github-publishing.md)
+for initial repository setup and release order.

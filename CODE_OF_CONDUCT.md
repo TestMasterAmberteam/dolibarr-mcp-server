@@ -51,9 +51,11 @@ an appointed representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported privately
-through the repository's GitHub Private Vulnerability Reporting channel until maintainers publish
-a dedicated private conduct contact. All complaints will be reviewed and investigated promptly
-and fairly.
+to a repository maintainer using a private contact method published on that maintainer's GitHub
+profile. If no private contact is available, open an issue asking the maintainers to establish a
+private channel without describing the incident or identifying anyone involved. GitHub Private
+Vulnerability Reporting is reserved for security vulnerabilities and must not be used for conduct
+reports. All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any
 incident.

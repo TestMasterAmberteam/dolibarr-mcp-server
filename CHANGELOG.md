@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Initial open source repository bootstrap.
+- Stateless MCP v2 Streamable HTTP server.
+- Direct, per-request Dolibarr API-key authentication.
+- Read-only `dolibarr_whoami` tool and operational health endpoints.
+- Strict tests, packaging, container, CI, and security gates.
 - Bounded, request-correlated diagnostics for invalid upstream statuses, JSON, and typed payloads
   without logging response content, credentials, identities, URLs, or query parameters (ADR 0006).
 - Project governance, security automation, and release preparation.
@@ -61,13 +66,3 @@ All notable changes to this project are documented here. The format follows
 - Kept leave access API-only with fixed routes, typed projections, local filters, and dedicated
   action endpoints; no database, browser automation, delete, balance override, or arbitrary
   `sqlfilters` is exposed.
-
-## [0.1.0] - 2026-08-19
-
-### Added
-
-- Initial open source repository bootstrap.
-- Stateless MCP v2 Streamable HTTP server.
-- Direct, per-request Dolibarr API-key authentication.
-- Read-only `dolibarr_whoami` tool and operational health endpoints.
-- Strict tests, packaging, container, CI, and security gates.
