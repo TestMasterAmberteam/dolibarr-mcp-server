@@ -77,9 +77,7 @@ jobs:
       - name: Install pinned actionlint
         run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
       - run: '"$(go env GOPATH)/bin/actionlint"'
-      - run: uv run zizmor .
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: uv run zizmor --offline .
 
   trivy-filesystem:
     name: Trivy filesystem
