@@ -65,7 +65,7 @@ Run as root on the Ubuntu host:
 ```bash
 dolibarr-mcp-deploy latest
 # Or deploy a particular published stable release:
-dolibarr-mcp-deploy v0.4.1
+dolibarr-mcp-deploy v0.4.2
 ```
 
 The helper resolves `latest` once using the GitHub Releases API. Explicit tags must

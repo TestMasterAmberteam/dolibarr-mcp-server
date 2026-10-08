@@ -89,11 +89,11 @@ see [LAN deployment](docs/deployment-lan.md).
 ## Docker and Compose
 
 ```bash
-docker build -t dolibarr-mcp-server:0.4.1 .
+docker build -t dolibarr-mcp-server:0.4.2 .
 docker run --rm --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m \
   -p 8000:8000 \
   --mount type=bind,src="$PWD/config.toml",dst=/app/config.toml,readonly \
-  dolibarr-mcp-server:0.4.1
+  dolibarr-mcp-server:0.4.2
 ```
 
 For a container, set `host = "0.0.0.0"` and the external Host allowlist in `config.toml` before
