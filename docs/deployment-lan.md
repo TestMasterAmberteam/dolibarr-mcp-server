@@ -4,9 +4,9 @@
 
 | Item | Value |
 | --- | --- |
-| Ubuntu host | `root@10.0.1.95` |
-| MCP Streamable HTTP URL | `http://10.0.1.95:8080/mcp` |
-| Liveness / readiness | `http://10.0.1.95:8080/health/live`, `/health/ready` |
+| Ubuntu host | `root@<deployment-host>` |
+| MCP Streamable HTTP URL | `http://<deployment-host>:8080/mcp` |
+| Liveness / readiness | `http://<deployment-host>:8080/health/live`, `/health/ready` |
 | Direct Dolibarr upstream | `https://erp.amberteam.pl/dolibarr` |
 | Service | `dolibarr-mcp.service`, user `dolibarr-mcp` |
 | Configuration | `/etc/dolibarr-mcp/config.toml` |
@@ -104,20 +104,26 @@ the Ubuntu host fetches the selected application release directly from GitHub.
 
 1. Select an existing Linux Jenkins agent with label `linux`, or change the
    `agent` label to your Linux agent's label. The agent needs `ssh`, `curl`, and
-   access to `10.0.1.95` on ports 22 and 8080.
+   access to the deployment host on ports 22 and 8080.
 2. Make sure the Pipeline and Credentials Binding plugins are installed.
 3. Create an **SSH Username with private key** credential with ID
-   `dolibarr-mcp-ssh`, username `root`, and a key authorized on `10.0.1.95`.
+   `dolibarr-mcp-ssh`, username `root`, and a key authorized on the deployment host.
    An unencrypted deployment key avoids an interactive passphrase prompt.
    The credential ID is configurable through `SSH_CREDENTIALS_ID`.
-4. Paste the local `Jenkinsfile` into the job. The first run registers the
+4. Create a **Secret file** credential with ID `dolibarr-mcp-known-hosts`. Its file
+   must contain the deployment host's independently verified OpenSSH `known_hosts`
+   entry. The credential ID is configurable through
+   `SSH_KNOWN_HOSTS_CREDENTIALS_ID`.
+5. Paste the local `Jenkinsfile` into the job. The first run registers the
    parameters with their defaults; subsequent runs use **Build with Parameters**.
-5. Set `RELEASE_TAG=latest` or an explicit `vMAJOR.MINOR.PATCH`.
+6. Set `DEPLOY_HOST` to the target DNS name or IPv4 address and set
+   `RELEASE_TAG=latest` or an explicit `vMAJOR.MINOR.PATCH`.
 
 Only trusted operators should be able to edit or run this job: its SSH credential
 allows root deployment on the target. The file pins the target's public Ed25519
-host key, read from the host during installation. If the host is rebuilt, verify
-the replacement key independently before updating the file.
+host key through the Jenkins Secret file credential rather than repository data.
+If the host is rebuilt, verify the replacement key independently before updating
+that credential.
 
 The pipeline invokes the already-installed helper. Deployment infrastructure is
 updated separately by reviewing and reinstalling the files under `deploy/lan`.
