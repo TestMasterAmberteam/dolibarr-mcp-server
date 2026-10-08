@@ -27,8 +27,18 @@ pipeline {
                     }
                 }
                 // Public host key read from the target during installation.
-                writeFile file: 'dolibarr-mcp-known-hosts', text: '''10.0.1.95 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIF8OIGKwezEt23q8KoFZO/nIROZbbJf7L7qeMk4Awce
-'''
+                writeFile file: 'dolibarr-mcp-known-hosts',
+                    text: '10.0.1.95 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIF8OIGKwezEt23q8KoFZO/nIROZbbJf7L7qeMk4Awce\n',
+                    encoding: 'UTF-8'
+                sh '''
+                    set -eu
+                    known_hosts="$WORKSPACE/dolibarr-mcp-known-hosts"
+                    test -s "$known_hosts"
+                    ssh-keygen -F 10.0.1.95 -f "$known_hosts" >/dev/null
+                    fingerprint=$(ssh-keygen -lf "$known_hosts")
+                    printf '%s\n' "$fingerprint" | \
+                        grep -F 'SHA256:+0CEZX7CvPXuf0aoUFG2b6aXEYURopoPIRNvpyRAIYs' >/dev/null
+                '''
             }
         }
         stage('Deploy release') {
@@ -43,9 +53,11 @@ pipeline {
                         set -eu
                         set +x
                         test "$SSH_USER" = root
+                        known_hosts="$WORKSPACE/dolibarr-mcp-known-hosts"
+                        test -s "$known_hosts"
                         ssh -i "$SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes \
                             -o StrictHostKeyChecking=yes \
-                            -o UserKnownHostsFile="$WORKSPACE/dolibarr-mcp-known-hosts" \
+                            -o UserKnownHostsFile="$known_hosts" \
                             -o ConnectTimeout=10 -o ServerAliveInterval=15 \
                             -o ServerAliveCountMax=3 "$SSH_USER@10.0.1.95" \
                             "/usr/local/sbin/dolibarr-mcp-deploy '$RELEASE_TAG'"
