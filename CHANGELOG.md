@@ -6,12 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-08
+
 ### Added
 
 - Ubuntu LAN deployment units, locked GitHub-release updates with startup rollback,
   and a standalone Jenkins pipeline for operator-selected release tags.
 - Deployment instructions for an HTTP LAN listener and direct HTTPS Dolibarr upstream.
 - Preview-confirmed creation of draft non-opportunity Dolibarr projects through `dolibarr_project_create`.
+
+### Fixed
+
+- GitHub Release creation now explicitly targets this repository when the publishing job runs
+  without a checkout.
+
+### Security
+
+- Updated locked dependencies, including PyJWT 2.15.0, to resolve runtime audit and Trivy findings.
 
 ## [0.4.1] - 2026-09-11
 
