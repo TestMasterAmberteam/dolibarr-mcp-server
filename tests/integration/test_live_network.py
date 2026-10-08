@@ -78,6 +78,7 @@ async def test_uvicorn_initialize_list_call_and_clean_shutdown(settings: Setting
             "dolibarr_thirdparty_create",
             "dolibarr_thirdparty_update",
             "dolibarr_user_search",
+            "dolibarr_project_create",
             "dolibarr_lead_search",
             "dolibarr_lead_stage_list",
             "dolibarr_lead_get",

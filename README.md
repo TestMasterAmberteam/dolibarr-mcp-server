@@ -83,6 +83,9 @@ The server listens on `127.0.0.1:8000` by default. `dolibarr-mcp --help` and
 `dolibarr-mcp --version` do not require application configuration. Use
 `dolibarr-mcp --config path/to/config.toml` to select another file explicitly.
 
+For the operator-requested Ubuntu HTTP LAN installation and Jenkins release updates,
+see [LAN deployment](docs/deployment-lan.md).
+
 ## Docker and Compose
 
 ```bash
@@ -216,6 +219,7 @@ token to write. The server re-reads the current API state and rejects a missing 
 | --- | --- |
 | `dolibarr_thirdparty_create` | Create a third party with an explicit customer classification |
 | `dolibarr_thirdparty_update` | Update only allowlisted company fields |
+| `dolibarr_project_create` | Create a draft non-opportunity project, with an optional existing third party |
 | `dolibarr_lead_create` | Create a draft project with `usage_opportunity=1`, existing third party, and stage |
 | `dolibarr_lead_update` | Update lead facts without changing its control fields |
 | `dolibarr_lead_change_status` | Change the opportunity stage using exactly one `stage_id` or resolvable `stage_code` |

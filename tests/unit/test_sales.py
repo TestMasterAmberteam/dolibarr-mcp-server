@@ -28,6 +28,7 @@ from dolibarr_mcp.models import (
     LeadUpdateInput,
     MutationPreview,
     MutationResult,
+    ProjectCreateInput,
     ThirdpartyCreateInput,
     ThirdpartyDetail,
     ThirdpartyUpdateInput,
@@ -584,6 +585,55 @@ async def test_lead_create_is_a_draft_opportunity_project() -> None:
     assert isinstance(payload["date_start"], int)
 
 
+async def test_project_create_is_a_draft_non_opportunity_project() -> None:
+    fake = FakeSalesClient()
+    sales = service(fake)
+    data = ProjectCreateInput(
+        title="Implementation",
+        thirdparty_id=2,
+        description="Delivery work",
+        date_start=date(2026, 10, 1),
+        date_end=date(2026, 10, 31),
+    )
+
+    preview = await sales.project_create("key", data, apply=False, confirmation_token=None)
+
+    assert isinstance(preview, MutationPreview)
+    assert preview.target_kind == "project"
+    assert preview.warnings == []
+
+    result = await sales.project_create(
+        "key",
+        data,
+        apply=True,
+        confirmation_token=preview.confirmation_token,
+    )
+
+    assert isinstance(result, MutationResult)
+    assert result.project is not None
+    assert result.project.title == "Implementation"
+    assert result.project.thirdparty_id == 2
+    assert result.project.project_state == "draft"
+    created_payload = next(payload for call, payload in fake.calls if call == "create_project")
+    assert isinstance(created_payload, dict)
+    assert created_payload["socid"] == 2
+    assert created_payload["title"] == "Implementation"
+    assert created_payload["description"] == "Delivery work"
+    assert created_payload["ref"] == "auto"
+    assert created_payload["usage_opportunity"] == 0
+    assert created_payload["status"] == 0
+    assert isinstance(created_payload["date_start"], int)
+    assert isinstance(created_payload["date_end"], int)
+
+    duplicate_preview = await sales.project_create(
+        "key",
+        ProjectCreateInput(title="Ordinary Project", thirdparty_id=1),
+        apply=False,
+        confirmation_token=None,
+    )
+    assert duplicate_preview.warnings == ["Possible duplicate project 11."]
+
+
 async def test_lead_update_and_stage_change_are_separate() -> None:
     fake = FakeSalesClient()
     sales = service(fake)
@@ -991,3 +1041,9 @@ def test_sales_input_models_reject_unknown_empty_and_invalid_values() -> None:
         LeadUpdateInput()
     with pytest.raises(ValidationError):
         LeadUpdateInput(date_start=date(2026, 9, 2), date_end=date(2026, 9, 1))
+    with pytest.raises(ValidationError):
+        ProjectCreateInput(
+            title="Project",
+            date_start=date(2026, 9, 2),
+            date_end=date(2026, 9, 1),
+        )

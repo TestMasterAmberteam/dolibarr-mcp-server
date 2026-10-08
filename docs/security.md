@@ -68,7 +68,10 @@ Sales support requires Dolibarr 23.0.3-compatible third-party, project, user, an
 REST endpoints. The MCP server never connects to the Dolibarr database and never accepts or builds
 `sqlfilters`. It does not install a Dolibarr module or call a custom endpoint.
 
-Upstream sales objects are projected into separate typed allowlists. Searches expose company
+Upstream sales objects are projected into separate typed allowlists. Ordinary-project creation is
+restricted to a fixed `POST /projects` payload with `ref=auto`, `usage_opportunity=0`, and draft
+`status=0`; it accepts only an optional pre-validated third party and bounded project fields.
+Searches expose company
 labels and selected lead metadata but omit notes. Detail tools may return public and private notes
 only for records the caller can read, truncated to 4000 characters. Tool inputs cannot select a
 host, path, method, header, arbitrary payload property, extrafield, bank field, or personal contact.

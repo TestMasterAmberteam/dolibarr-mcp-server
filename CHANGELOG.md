@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Ubuntu LAN deployment units, locked GitHub-release updates with startup rollback,
+  and a standalone Jenkins pipeline for operator-selected release tags.
+- Deployment instructions for an HTTP LAN listener and direct HTTPS Dolibarr upstream.
+- Preview-confirmed creation of draft non-opportunity Dolibarr projects through `dolibarr_project_create`.
+
 ## [0.4.1] - 2026-09-11
 
 ### Added

@@ -611,6 +611,32 @@ class LeadUpdateInput(BaseModel):
         return self
 
 
+class ProjectCreateInput(BaseModel):
+    """Allowlisted fields for creating one draft non-opportunity project."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    title: NonEmptyString
+    thirdparty_id: int | None = Field(default=None, gt=0)
+    description: str | None = Field(default=None, max_length=4000)
+    date_start: date | None = None
+    date_end: date | None = None
+    public_note: str | None = Field(default=None, max_length=4000)
+    private_note: str | None = Field(default=None, max_length=4000)
+
+    @model_validator(mode="after")
+    def validate_dates(self) -> ProjectCreateInput:
+        """Require an ordered optional project date range."""
+        if (
+            self.date_start is not None
+            and self.date_end is not None
+            and self.date_start > self.date_end
+        ):
+            msg = "date_start must not be later than date_end"
+            raise ValueError(msg)
+        return self
+
+
 class LeaveRequestCreateInput(BaseModel):
     """Allowlisted fields for creating one draft leave request."""
 
@@ -825,6 +851,23 @@ class LeadDetail(LeadSummary):
     private_note: str | None = Field(default=None, max_length=4000)
 
 
+class ProjectDetail(BaseModel):
+    """Allowlisted detailed view of a non-opportunity project."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    project_id: int = Field(gt=0)
+    ref: NonEmptyString
+    title: NonEmptyString
+    thirdparty_id: int | None = Field(default=None, gt=0)
+    project_state: ProjectState
+    date_start: date | None = None
+    date_end: date | None = None
+    description: str | None = Field(default=None, max_length=4000)
+    public_note: str | None = Field(default=None, max_length=4000)
+    private_note: str | None = Field(default=None, max_length=4000)
+
+
 class LeadSearchResult(BaseModel):
     """Paged lead search response."""
 
@@ -867,7 +910,7 @@ class MutationPreview(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     operation: NonEmptyString
-    target_kind: Literal["thirdparty", "lead", "leave_request"]
+    target_kind: Literal["thirdparty", "lead", "project", "leave_request"]
     target_id: int | None = Field(default=None, gt=0)
     changes: list[MutationChange]
     warnings: list[str]
@@ -887,6 +930,7 @@ class MutationResult(BaseModel):
     partial_errors: list[str] = Field(default_factory=list)
     thirdparty: ThirdpartyDetail | None = None
     lead: LeadDetail | None = None
+    project: ProjectDetail | None = None
     leave_request: LeaveRequestDetail | None = None
 
 
@@ -897,7 +941,7 @@ class MutationResponse(BaseModel):
 
     operation: NonEmptyString
     phase: Literal["preview", "result"]
-    target_kind: Literal["thirdparty", "lead", "leave_request"]
+    target_kind: Literal["thirdparty", "lead", "project", "leave_request"]
     target_id: int | None = Field(default=None, gt=0)
     changes: list[MutationChange] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -907,6 +951,7 @@ class MutationResponse(BaseModel):
     partial_errors: list[str] = Field(default_factory=list)
     thirdparty: ThirdpartyDetail | None = None
     lead: LeadDetail | None = None
+    project: ProjectDetail | None = None
     leave_request: LeaveRequestDetail | None = None
 
     @classmethod
@@ -934,6 +979,8 @@ class MutationResponse(BaseModel):
                 if value.thirdparty is not None
                 else "lead"
                 if value.lead is not None
+                else "project"
+                if value.project is not None
                 else "leave_request"
             ),
             target_id=value.target_id,
@@ -943,5 +990,6 @@ class MutationResponse(BaseModel):
             partial_errors=value.partial_errors,
             thirdparty=value.thirdparty,
             lead=value.lead,
+            project=value.project,
             leave_request=value.leave_request,
         )
