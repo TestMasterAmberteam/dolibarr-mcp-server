@@ -1,0 +1,14 @@
+# Operator-requested HTTP listener with a direct HTTPS Dolibarr upstream.
+dolibarr_base_url = "https://erp.amberteam.pl/dolibarr"
+dolibarr_ca_bundle = "/etc/dolibarr-mcp/ca-bundle.pem"
+allow_insecure_localhost = false
+host = "0.0.0.0"
+port = 8080
+log_level = "INFO"
+mcp_allowed_hosts = [
+  "10.0.1.95:8080",
+  "mcp-dolibarr:8080",
+  "127.0.0.1:8080",
+  "localhost:8080",
+]
+mcp_allowed_origins = []

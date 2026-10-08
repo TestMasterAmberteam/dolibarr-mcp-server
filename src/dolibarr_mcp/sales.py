@@ -33,6 +33,8 @@ from dolibarr_mcp.models import (
     MutationChange,
     MutationPreview,
     MutationResult,
+    ProjectCreateInput,
+    ProjectDetail,
     ProjectState,
     ThirdpartyCreateInput,
     ThirdpartyDetail,
@@ -222,6 +224,21 @@ def _lead_detail(
     )
 
 
+def _project_detail(payload: DolibarrProjectPayload) -> ProjectDetail:
+    return ProjectDetail(
+        project_id=payload.project_id,
+        ref=payload.ref,
+        title=payload.label,
+        thirdparty_id=payload.thirdparty_id,
+        project_state=_PROJECT_STATE_BY_API[payload.status],
+        date_start=_timestamp_to_date(payload.date_start),
+        date_end=_timestamp_to_date(payload.date_end),
+        description=_bounded_note(payload.description),
+        public_note=_bounded_note(payload.public_note),
+        private_note=_bounded_note(payload.private_note),
+    )
+
+
 def _changes(
     current: dict[str, object],
     proposed: dict[str, object],
@@ -274,6 +291,26 @@ def _lead_api_payload(data: LeadCreateInput | LeadUpdateInput) -> dict[str, obje
         "description": "description",
         "amount": "opp_amount",
         "probability_percent": "opp_percent",
+        "public_note": "note_public",
+        "private_note": "note_private",
+    }
+    for field, api_field in field_mapping.items():
+        if field in source:
+            payload[api_field] = source[field]
+    for field in ("date_start", "date_end"):
+        value = getattr(data, field)
+        if value is not None:
+            payload[field] = _date_to_timestamp(value)
+    return payload
+
+
+def _project_api_payload(data: ProjectCreateInput) -> dict[str, object]:
+    source = data.model_dump(exclude_none=True)
+    payload: dict[str, object] = {}
+    field_mapping = {
+        "thirdparty_id": "socid",
+        "title": "title",
+        "description": "description",
         "public_note": "note_public",
         "private_note": "note_private",
     }
@@ -764,6 +801,59 @@ class SalesService:
             target_id=project_id,
             warnings=warnings,
             lead=detail,
+        )
+
+    async def project_create(
+        self,
+        api_key: str,
+        data: ProjectCreateInput,
+        *,
+        apply: bool,
+        confirmation_token: str | None,
+    ) -> MutationPreview | MutationResult:
+        thirdparty = (
+            await self._client.get_thirdparty(api_key, data.thirdparty_id)
+            if data.thirdparty_id is not None
+            else None
+        )
+        proposed = data.model_dump(mode="json", exclude_none=True)
+        duplicates = [
+            project.project_id
+            for project in await self._client.list_projects(api_key)
+            if not project.usage_opportunity
+            and project.thirdparty_id == data.thirdparty_id
+            and _normalize_text(project.label) == _normalize_text(data.title)
+        ]
+        warnings = [f"Possible duplicate project {project_id}." for project_id in duplicates]
+        preview = MutationPreview(
+            operation="project_create",
+            target_kind="project",
+            changes=_create_changes(proposed),
+            warnings=warnings,
+            confirmation_token=_confirmation_token(
+                operation="project_create",
+                target_id=None,
+                proposed=proposed,
+                current={
+                    "thirdparty": thirdparty.model_dump(mode="json")
+                    if thirdparty is not None
+                    else None
+                },
+                duplicate_ids=duplicates,
+            ),
+        )
+        if not _confirmed(preview, apply=apply, token=confirmation_token):
+            return preview
+        payload = _project_api_payload(data)
+        payload.update({"ref": "auto", "usage_opportunity": 0, "status": 0})
+        project_id = await self._client.create_project(api_key, payload)
+        detail = _project_detail(await self._client.get_project(api_key, project_id))
+        return MutationResult(
+            operation=preview.operation,
+            outcome="applied",
+            target_id=project_id,
+            warnings=warnings,
+            project=detail,
         )
 
     async def lead_update(

@@ -92,7 +92,9 @@ current API state and recomputes the token. A mismatch returns a safe conflict b
 The token is a workflow and stale-state guard, not a credential or replacement for Dolibarr
 authorization. Callers already holding the API key could call Dolibarr directly.
 
-Third-party and lead creates use fixed POSTs. Partial field edits and resolved sales-stage changes
+Third-party, ordinary-project, and lead creates use fixed POSTs. Ordinary-project creation always
+submits `ref=auto`, `usage_opportunity=0`, and `status=0`; it accepts only allowlisted project
+fields and an optional existing third party. Partial field edits and resolved sales-stage changes
 use fixed PUTs; stage changes submit only the project REST property `opp_status`. A stage change
 re-reads the lead and returns `partial` unless the requested numeric ID is visible. Draft validation
 and reopening use `POST /projects/{id}/validate`. Owner replacement first

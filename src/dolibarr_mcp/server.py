@@ -31,6 +31,7 @@ from dolibarr_mcp.models import (
     MutationResponse,
     MutationResult,
     MyTimeReport,
+    ProjectCreateInput,
     ProjectState,
     ProjectTimeReport,
     SummaryGroup,
@@ -411,6 +412,44 @@ def create_mcp_server(
             query=query,
             offset=offset,
             limit=limit,
+        )
+
+    @server.tool(
+        name="dolibarr_project_create",
+        description=(
+            "Preview or explicitly confirm creation of a draft non-opportunity project. "
+            "The optional thirdparty_id must identify an existing third party."
+        ),
+        annotations=_CREATE_ANNOTATIONS,
+    )
+    async def dolibarr_project_create(
+        title: ShortText,
+        *,
+        thirdparty_id: PositiveIdentifier | None = None,
+        description: NoteText | None = None,
+        date_start: date | None = None,
+        date_end: date | None = None,
+        public_note: NoteText | None = None,
+        private_note: NoteText | None = None,
+        apply: bool = False,
+        confirmation_token: ConfirmationToken | None = None,
+    ) -> MutationResponse:
+        data = ProjectCreateInput(
+            title=title,
+            thirdparty_id=thirdparty_id,
+            description=description,
+            date_start=date_start,
+            date_end=date_end,
+            public_note=public_note,
+            private_note=private_note,
+        )
+        return _mutation_response(
+            await sales.project_create(
+                get_request_api_key(),
+                data,
+                apply=apply,
+                confirmation_token=confirmation_token,
+            )
         )
 
     @server.tool(

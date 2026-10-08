@@ -158,6 +158,7 @@ jobs:
         run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --verify-tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
 
   pypi:
     name: PyPI Trusted Publishing

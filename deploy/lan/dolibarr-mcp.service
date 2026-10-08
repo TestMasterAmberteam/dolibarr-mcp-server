@@ -1,0 +1,24 @@
+[Unit]
+Description=Dolibarr MCP Streamable HTTP server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dolibarr-mcp
+Group=dolibarr-mcp
+WorkingDirectory=/opt/dolibarr-mcp/current
+ExecStart=/opt/dolibarr-mcp/current/.venv/bin/dolibarr-mcp --config /etc/dolibarr-mcp/config.toml
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target
