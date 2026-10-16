@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Read-only `dolibarr_invoice_search` and `dolibarr_invoice_get` tools for customer-invoice
+  headers and paged invoice lines, including references, dates, statuses, exact decimal
+  totals, quantity, unit price, VAT, discounts, and separate multicurrency amounts.
+- Bounded invoice processing, typed field allowlists, and HTTP/MCP regression coverage
+  for per-request credentials, permissions, pagination, and invalid parameters.
+
 ## [0.4.2] - 2026-10-08
 
 ### Added
