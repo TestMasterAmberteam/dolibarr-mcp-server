@@ -6,7 +6,8 @@ host = "0.0.0.0"
 port = 8080
 log_level = "INFO"
 mcp_allowed_hosts = [
-  "10.0.1.95:8080",
+  # Replace the documentation address with the deployment host's LAN address.
+  "192.0.2.10:8080",
   "mcp-dolibarr:8080",
   "127.0.0.1:8080",
   "localhost:8080",

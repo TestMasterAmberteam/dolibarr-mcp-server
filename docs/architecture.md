@@ -7,7 +7,7 @@ The service has four explicit layers:
 1. Starlette/Uvicorn owns HTTP, health routes, correlation IDs, and startup/shutdown.
 2. Transport security and Bearer middleware validate `Host`, `Origin`, header syntax, and the
    presented key before MCP parses a message.
-3. One `MCPServer` instance dispatches 30 allowlisted reporting, sales, and leave tools.
+3. One `MCPServer` instance dispatches 33 allowlisted reporting, sales, invoice, and leave tools.
 4. `DolibarrClient` owns one `httpx2.AsyncClient` pool, the fixed `/users/info` operation, and
    fixed project, third-party, contact-relation, user-label, time-entry, leave-type, and
    leave-request REST operations.
@@ -28,7 +28,7 @@ are inherently self-contained; stateless mode also avoids retaining legacy trans
 7. SDK `AuthContextMiddleware` scopes the safe identity and the private holder scopes the key to
    the active request.
 8. `dolibarr_whoami` reads the existing identity and performs no second Dolibarr call.
-9. Reporting, sales, and leave tools attach the same key only to individual, fixed-path API
+9. Reporting, sales, invoice, and leave tools attach the same key only to individual, fixed-path API
    requests. Dolibarr authorizes every read or write with the caller's actual permissions.
 10. The credential holder is cleared in `finally` and all context references are released when the
     request ends.
@@ -130,3 +130,17 @@ remains authoritative for permission, overlap, configured approver, and balance 
 - A leave action that does not persist its expected status returns a partial refreshed result.
 
 No mapping returns upstream bodies, URLs, headers, exception chains, or credentials.
+
+## Customer-invoice reads
+
+`InvoiceService` uses the shared `DolibarrClient` for fixed invoice GETs only. It filters
+accessible headers locally by customer ID, reference substring, and numeric status, then returns
+an explicit page. Detail returns a typed header and a page of the upstream lines in invoice order.
+`invoice_models.py` separates upstream aliases from the public schema and preserves decimal
+amounts without binary float arithmetic. Base-currency and document-currency totals remain
+separate, and dates remain upstream Unix timestamps.
+
+List calls disable lines/linked objects; detail disables contacts. Both apply fixed property
+allowlists, input and output bounds, and existing safe errors. No credential, identity, invoice,
+or paging state is retained between HTTP requests. The security rationale and verified upstream
+reference are in [ADR 0008](adr/0008-read-only-customer-invoices.md).

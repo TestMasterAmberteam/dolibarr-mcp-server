@@ -7,10 +7,10 @@ import re
 import ssl
 from email.utils import parsedate_to_datetime
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Any, Literal, Self, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, TypeVar
 
 import httpx2
-from pydantic import TypeAdapter, ValidationError
+from pydantic import Field, TypeAdapter, ValidationError
 
 from dolibarr_mcp.errors import (
     DolibarrConflictError,
@@ -23,6 +23,7 @@ from dolibarr_mcp.errors import (
     InvalidDolibarrCredentialsError,
     InvalidDolibarrResponseError,
 )
+from dolibarr_mcp.invoice_models import DolibarrInvoiceHeaderPayload, DolibarrInvoicePayload
 from dolibarr_mcp.models import (
     DolibarrLeadStageObservationPayload,
     DolibarrLeaveRequestPayload,
@@ -53,6 +54,7 @@ _MAX_TIME_LINES = 50_000
 _MAX_SALES_RECORDS = 10_000
 _MAX_LEAVE_REQUESTS = 10_000
 _MAX_LEAVE_TYPES = 1_000
+_MAX_INVOICES = 10_000
 _MAX_VALIDATION_DIAGNOSTICS = 20
 _MAX_DIAGNOSTIC_TOKEN_LENGTH = 64
 _UNSAFE_DIAGNOSTIC_CHARACTER = re.compile(r"[^A-Za-z0-9_-]")
@@ -62,6 +64,15 @@ _LOGGER = logging.getLogger("dolibarr_mcp.upstream")
 T = TypeVar("T")
 
 _IDENTITY_ADAPTER = TypeAdapter(DolibarrUserPayload)
+_INVOICE_ADAPTER = TypeAdapter(DolibarrInvoicePayload)
+_INVOICE_LIST_ADAPTER: TypeAdapter[list[DolibarrInvoiceHeaderPayload]] = TypeAdapter(
+    Annotated[list[DolibarrInvoiceHeaderPayload], Field(max_length=_UPSTREAM_PAGE_SIZE)]
+)
+_INVOICE_PROPERTIES = (
+    "id,ref,socid,fk_soc,type,status,statut,paye,close_code,ref_customer,ref_client,"
+    "date,date_lim_reglement,total_ht,total_tva,total_ttc,multicurrency_code,"
+    "multicurrency_total_ht,multicurrency_total_tva,multicurrency_total_ttc"
+)
 _LEAVE_ADAPTER = TypeAdapter(DolibarrLeaveRequestPayload)
 _LEAVE_LIST_ADAPTER = TypeAdapter(list[DolibarrLeaveRequestPayload])
 _LEAVE_TYPE_LIST_ADAPTER = TypeAdapter(list[DolibarrLeaveTypePayload])
@@ -80,6 +91,8 @@ _ANY_ADAPTER = TypeAdapter(object)
 
 _SCHEMA_NAMES = {
     id(_IDENTITY_ADAPTER): "identity",
+    id(_INVOICE_ADAPTER): "invoice",
+    id(_INVOICE_LIST_ADAPTER): "invoice_list",
     id(_LEAVE_ADAPTER): "leave_request",
     id(_LEAVE_LIST_ADAPTER): "leave_request_list",
     id(_LEAVE_TYPE_LIST_ADAPTER): "leave_type_list",
@@ -482,6 +495,42 @@ class DolibarrClient:
             path=f"holidays/{request_id}/{action}",
             json_body=body,
             adapter=_LEAVE_ADAPTER,
+        )
+
+    async def list_invoices(self, api_key: str) -> list[DolibarrInvoiceHeaderPayload]:
+        """Read accessible headers without altering Dolibarr's customer access filter."""
+        rows: list[DolibarrInvoiceHeaderPayload] = []
+        for page in range(_MAX_INVOICES // _UPSTREAM_PAGE_SIZE):
+            current = await self._get_api(
+                api_key,
+                path="invoices",
+                params={
+                    "limit": _UPSTREAM_PAGE_SIZE,
+                    "page": page,
+                    "sortfield": "t.rowid",
+                    "sortorder": "ASC",
+                    "properties": _INVOICE_PROPERTIES,
+                    "withLines": "false",
+                    "loadlinkedobjects": 0,
+                },
+                adapter=_INVOICE_LIST_ADAPTER,
+            )
+            rows.extend(current)
+            if len(current) < _UPSTREAM_PAGE_SIZE:
+                return rows
+        raise DolibarrResultLimitError
+
+    async def get_invoice(self, api_key: str, invoice_id: int) -> DolibarrInvoicePayload:
+        """Read one authorized invoice and its lines, excluding contacts."""
+        return await self._get_api(
+            api_key,
+            path=f"invoices/{invoice_id}",
+            params={
+                "properties": f"{_INVOICE_PROPERTIES},lines",
+                "contact_list": -1,
+                "withLines": "true",
+            },
+            adapter=_INVOICE_ADAPTER,
         )
 
     async def list_thirdparties(self, api_key: str) -> list[DolibarrThirdpartyPayload]:
