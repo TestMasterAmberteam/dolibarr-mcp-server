@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-16
+
 ### Added
 
 - Read-only `dolibarr_invoice_search` and `dolibarr_invoice_get` tools for customer-invoice

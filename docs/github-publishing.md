@@ -134,7 +134,7 @@ When the repository source is stable and CI is green:
 5. Create and push an annotated tag matching the package version:
 
    ```powershell
-   $Version = "0.4.1"
+   $Version = "0.5.0"
    git tag -a "v$Version" -m "Release v$Version"
    git push origin "v$Version"
    ```
