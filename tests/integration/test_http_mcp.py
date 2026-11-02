@@ -39,6 +39,7 @@ TOOL_NAMES = [
     "dolibarr_user_search",
     "dolibarr_project_create",
     "dolibarr_task_create",
+    "dolibarr_task_assign",
     "dolibarr_lead_search",
     "dolibarr_lead_stage_list",
     "dolibarr_lead_get",
@@ -78,6 +79,7 @@ CREATE_TOOL_NAMES = {
     "dolibarr_thirdparty_create",
     "dolibarr_project_create",
     "dolibarr_task_create",
+    "dolibarr_task_assign",
     "dolibarr_lead_create",
     "dolibarr_leave_request_create",
 }

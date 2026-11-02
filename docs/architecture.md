@@ -128,6 +128,22 @@ description, UTC-noon dates, and `planned_workload` seconds. A positive task ID 
 rereads return `partial` with the known ID; unexpected persisted values also return `partial`.
 Task creation does not mutate project state or assign users. See ADR 0009 for failure boundaries.
 
+## Adding people to tasks
+
+`dolibarr_task_assign` requires explicit project, task, and user IDs and a closed role allowlist:
+`TASKCONTRIBUTOR` (default) or `TASKEXECUTIVE`. It rereads task/project/user facts and up to
+1000 task contacts before both preview and apply. A mismatch in task/project ownership,
+closed project, inactive user, or stale token blocks writing. Contact ordering is normalized by
+relationship ID for token generation. Internal active links use Dolibarr contact status `4`;
+external contacts, inactive links, and different roles never count as an existing assignment.
+
+A single `POST /tasks/{id}/contacts` sends the user ID as `fk_socpeople`, the allowlisted role,
+`source=internal`, and `notrigger=0`. No existing relation is removed. The service rereads contacts
+after the attempt, including when the POST reports an error, and returns `partial` if the request
+failed, the reread failed, or the requested active link is absent. Results expose only the requested
+user summary and verified assignment state; task notes and personal contact fields are excluded.
+An already-present requested link returns `no_op` without a POST. See ADR 0010.
+
 ## Failure boundaries
 
 - Dolibarr 401/403 becomes HTTP 401 with `WWW-Authenticate: Bearer`.

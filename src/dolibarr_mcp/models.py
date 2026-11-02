@@ -27,6 +27,7 @@ LeaveHalfDayMode = Literal[
     "start_afternoon_end_morning",
 ]
 MutationOutcome = Literal["applied", "no_op", "partial"]
+TaskRole = Literal["TASKCONTRIBUTOR", "TASKEXECUTIVE"]
 _DOLIBARR_TEXT_MAX_BYTES = (1 << 16) - 1
 
 
@@ -329,6 +330,18 @@ class DolibarrProjectContactPayload(BaseModel):
     def blank_contact_value(cls, value: object) -> object:
         """Normalize empty optional contact relation values."""
         return _blank_to_none(value)
+
+
+class DolibarrTaskContactPayload(BaseModel):
+    """Minimum task-contact facts; contact and relationship IDs stay distinct."""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    contact_id: int = Field(alias="id", gt=0)
+    row_id: int = Field(alias="rowid", gt=0)
+    code: NonEmptyString
+    source: str = Field(min_length=1, max_length=32)
+    status: int = Field(ge=0)
 
 
 class DolibarrLeaveRequestPayload(BaseModel):
@@ -955,6 +968,18 @@ class TaskDetail(TaskCreateInput):
     ref: NonEmptyString
 
 
+class TaskAssignmentDetail(BaseModel):
+    """Requested internal task assignment and its authoritative verification state."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    task_id: int = Field(gt=0)
+    project_id: int = Field(gt=0)
+    user: UserSummary
+    role: TaskRole
+    assigned: bool | None = None
+
+
 class MutationChange(BaseModel):
     """One normalized field difference shown before a write."""
 
@@ -993,6 +1018,7 @@ class MutationResult(BaseModel):
     lead: LeadDetail | None = None
     project: ProjectDetail | None = None
     task: TaskDetail | None = None
+    task_assignment: TaskAssignmentDetail | None = None
     leave_request: LeaveRequestDetail | None = None
 
 
@@ -1015,6 +1041,7 @@ class MutationResponse(BaseModel):
     lead: LeadDetail | None = None
     project: ProjectDetail | None = None
     task: TaskDetail | None = None
+    task_assignment: TaskAssignmentDetail | None = None
     leave_request: LeaveRequestDetail | None = None
 
     @classmethod
@@ -1045,7 +1072,7 @@ class MutationResponse(BaseModel):
                 else "project"
                 if value.project is not None
                 else "task"
-                if value.operation == "task_create"
+                if value.operation in {"task_create", "task_assign"}
                 else "leave_request"
             ),
             target_id=value.target_id,
@@ -1057,5 +1084,6 @@ class MutationResponse(BaseModel):
             lead=value.lead,
             project=value.project,
             task=value.task,
+            task_assignment=value.task_assignment,
             leave_request=value.leave_request,
         )

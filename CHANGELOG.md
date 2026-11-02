@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Preview-confirmed `dolibarr_task_assign` to add active Dolibarr users as task contributors or
+  executives, preserving other assignments, verifying same-project ownership and active links,
+  and reporting no-op or partial outcomes after a bounded contacts reread.
 - Preview-confirmed `dolibarr_task_create` for tasks and subtasks in existing projects, with
   optional dates, description, and planned workload in seconds. Parent/project checks,
   duplicate warnings, stale-preview rejection, and an authoritative reread guard writes.
