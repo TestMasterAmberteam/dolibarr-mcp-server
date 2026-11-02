@@ -41,6 +41,8 @@ from dolibarr_mcp.models import (
     ProjectState,
     ProjectTimeReport,
     SummaryGroup,
+    TaskCreateInput,
+    TaskRole,
     TaskTimespentReport,
     ThirdpartyCreateInput,
     ThirdpartyDetail,
@@ -53,6 +55,7 @@ from dolibarr_mcp.models import (
 )
 from dolibarr_mcp.reporting import MAX_OUTPUT_ROWS, TimeReportingService
 from dolibarr_mcp.sales import SalesService
+from dolibarr_mcp.tasks import TaskService
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -122,6 +125,76 @@ def _current_identity() -> VerifiedIdentity:
         raise PermissionError(message) from None
 
 
+def _register_task_tools(server: MCPServer[None], tasks: TaskService) -> None:
+    """Register related task writes together, preserving their public order."""
+
+    @server.tool(
+        name="dolibarr_task_create",
+        description=(
+            "Preview or explicitly confirm adding a task to an existing draft or open project. "
+            "Optional parent_task_id must belong to the same project. Workload is in seconds. "
+            "Call first with apply=false, then repeat with confirmation_token and apply=true."
+        ),
+        annotations=_CREATE_ANNOTATIONS,
+    )
+    async def dolibarr_task_create(
+        project_id: PositiveIdentifier,
+        label: ShortText,
+        *,
+        parent_task_id: PositiveIdentifier | None = None,
+        description: NoteText | None = None,
+        date_start: date | None = None,
+        date_end: date | None = None,
+        planned_workload_seconds: Annotated[int, Field(ge=0, le=2_147_483_647)] | None = None,
+        apply: bool = False,
+        confirmation_token: ConfirmationToken | None = None,
+    ) -> MutationResponse:
+        data = TaskCreateInput(
+            project_id=project_id,
+            label=label,
+            parent_task_id=parent_task_id,
+            description=description,
+            date_start=date_start,
+            date_end=date_end,
+            planned_workload_seconds=planned_workload_seconds,
+        )
+        return _mutation_response(
+            await tasks.create(
+                get_request_api_key(), data, apply=apply, confirmation_token=confirmation_token
+            )
+        )
+
+    @server.tool(
+        name="dolibarr_task_assign",
+        description=(
+            "Preview or explicitly confirm adding an active Dolibarr user to a task in the "
+            "specified project. Adds TASKCONTRIBUTOR (default) or TASKEXECUTIVE without removing "
+            "existing assignments. Repeat with confirmation_token and apply=true to write."
+        ),
+        annotations=_CREATE_ANNOTATIONS,
+    )
+    async def dolibarr_task_assign(
+        project_id: PositiveIdentifier,
+        task_id: PositiveIdentifier,
+        user_id: PositiveIdentifier,
+        *,
+        role: TaskRole = "TASKCONTRIBUTOR",
+        apply: bool = False,
+        confirmation_token: ConfirmationToken | None = None,
+    ) -> MutationResponse:
+        return _mutation_response(
+            await tasks.assign(
+                get_request_api_key(),
+                project_id=project_id,
+                task_id=task_id,
+                user_id=user_id,
+                role=role,
+                apply=apply,
+                confirmation_token=confirmation_token,
+            )
+        )
+
+
 def create_mcp_server(
     client: DolibarrClient,
     *,
@@ -137,6 +210,7 @@ def create_mcp_server(
     sales = SalesService(client, lead_stage_catalog=lead_stage_catalog)
     leave_requests = LeaveRequestService(client)
     invoices = InvoiceService(client)
+    tasks = TaskService(client)
 
     @server.tool(
         name="dolibarr_whoami",
@@ -405,7 +479,7 @@ def create_mcp_server(
 
     @server.tool(
         name="dolibarr_user_search",
-        description="Search accessible active Dolibarr users for lead assignment.",
+        description="Search accessible active Dolibarr users for project and task assignment.",
         annotations=_READ_ONLY_ANNOTATIONS,
     )
     async def dolibarr_user_search(
@@ -458,6 +532,8 @@ def create_mcp_server(
                 confirmation_token=confirmation_token,
             )
         )
+
+    _register_task_tools(server, tasks)
 
     @server.tool(
         name="dolibarr_lead_search",
