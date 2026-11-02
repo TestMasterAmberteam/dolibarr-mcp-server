@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM ghcr.io/astral-sh/uv:0.12.13 AS uv-bin
+FROM ghcr.io/astral-sh/uv:0.13.0 AS uv-bin
 
 FROM python:3.14.7-slim-bookworm AS builder
 
@@ -19,7 +19,7 @@ FROM python:3.14.7-slim-bookworm AS runtime
 
 LABEL org.opencontainers.image.title="dolibarr-mcp-server" \
       org.opencontainers.image.description="Stateless per-user Dolibarr MCP server" \
-      org.opencontainers.image.version="0.4.1" \
+      org.opencontainers.image.version="0.5.0" \
       org.opencontainers.image.licenses="MIT"
 
 ENV PATH="/app/.venv/bin:${PATH}" \

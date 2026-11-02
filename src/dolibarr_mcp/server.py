@@ -1,4 +1,4 @@
-"""MCP server definition containing allowlisted reporting, sales, and leave tools."""
+"""MCP server definition containing allowlisted Dolibarr tools."""
 
 from __future__ import annotations
 
@@ -12,6 +12,12 @@ from pydantic import Field, ValidationError
 
 from dolibarr_mcp import __version__
 from dolibarr_mcp.credentials import get_request_api_key
+from dolibarr_mcp.invoice_models import (  # noqa: TC001 - MCP resolves schemas at runtime
+    InvoiceDetail,
+    InvoiceSearchResult,
+    InvoiceStatus,
+)
+from dolibarr_mcp.invoices import InvoiceService
 from dolibarr_mcp.leave_requests import LeaveRequestService
 from dolibarr_mcp.models import (
     CustomerStatus,
@@ -130,6 +136,7 @@ def create_mcp_server(
     reporting = TimeReportingService(client)
     sales = SalesService(client, lead_stage_catalog=lead_stage_catalog)
     leave_requests = LeaveRequestService(client)
+    invoices = InvoiceService(client)
 
     @server.tool(
         name="dolibarr_whoami",
@@ -926,5 +933,49 @@ def create_mcp_server(
                 confirmation_token=confirmation_token,
             )
         )
+
+    @server.tool(
+        name="dolibarr_invoice_search",
+        description=(
+            "Search accessible customer invoice headers by thirdparty_id, reference substring, "
+            "or status (0=draft, 1=validated, 2=closed, 3=abandoned). "
+            "Dates are Unix timestamps; decimal amounts are strings. No invoice lines."
+        ),
+        annotations=_READ_ONLY_ANNOTATIONS,
+    )
+    async def dolibarr_invoice_search(
+        *,
+        thirdparty_id: PositiveIdentifier | None = None,
+        query: QueryText | None = None,
+        status: InvoiceStatus | None = None,
+        offset: ResultOffset = 0,
+        limit: OutputLimit = 200,
+    ) -> InvoiceSearchResult:
+        return await invoices.search(
+            get_request_api_key(),
+            thirdparty_id=thirdparty_id,
+            query=query,
+            status=status,
+            offset=offset,
+            limit=limit,
+        )
+
+    @server.tool(
+        name="dolibarr_invoice_get",
+        description=(
+            "Return one authorized customer invoice header and a page of its lines in invoice "
+            "order. Use offset/limit and has_more to read all lines. Dates are Unix timestamps; "
+            "decimal amounts are strings. total_* and unit_price use the installation's base "
+            "currency; multicurrency_* use header.multicurrency_code."
+        ),
+        annotations=_READ_ONLY_ANNOTATIONS,
+    )
+    async def dolibarr_invoice_get(
+        invoice_id: PositiveIdentifier,
+        *,
+        offset: ResultOffset = 0,
+        limit: OutputLimit = 200,
+    ) -> InvoiceDetail:
+        return await invoices.get(get_request_api_key(), invoice_id, offset=offset, limit=limit)
 
     return server

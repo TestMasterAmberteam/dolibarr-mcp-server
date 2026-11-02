@@ -106,6 +106,28 @@ configured inactive stages, or require one unambiguous observed ID before the or
 preview-token flow. The authoritative reread must expose the resolved ID, otherwise the result is
 `partial` rather than `applied`.
 
+## Customer-invoice read boundary
+
+Invoice tools use only fixed `GET /invoices` and `GET /invoices/{positive_id}` routes with the
+requesting user's key. Search deliberately sends neither `thirdparty_ids` nor `sqlfilters`:
+Dolibarr 23.0.3 conditions its sales-representative restriction on the absence of a third-party
+filter. Customer, reference, and status filters therefore run locally on the unfiltered,
+accessible collection. Detail uses Dolibarr's resource access check. Authentication, identity
+lookup, credential lifetime, and the shared HTTP pool follow the existing request boundary.
+
+List requests disable lines and linked objects and request only fixed header properties.
+Detail disables contact loading and projects headers/lines into typed allowlists. No bank data,
+payment URL, notes, contacts, purchase prices, extrafields, or upstream error bodies reach tool
+output. Monetary values and quantities use finite Decimal values, serialized as strings;
+base-currency and multicurrency amounts are distinct. Dates retain upstream Unix timestamps.
+
+Search processes at most 100 pages of 100 headers and fails explicitly if the bound is reached;
+a page exceeding 100 rows is rejected. Detail validates at most 1000 lines. Output is paged
+at 1-500 rows, descriptions are bounded to 65,535 incoming characters and 4000 output characters,
+and unexpected or malformed payloads follow the existing safe diagnostics without logging data.
+Invoice text is untrusted business data. There are no invoice mutations or credential caches.
+See [ADR 0008](adr/0008-read-only-customer-invoices.md) for the API and projection decision.
+
 ## Leave-request data and write boundary
 
 Leave support uses only Dolibarr's official Holidays and setup-dictionary REST endpoints. It does

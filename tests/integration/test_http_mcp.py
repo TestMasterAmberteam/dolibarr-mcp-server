@@ -57,9 +57,13 @@ TOOL_NAMES = [
     "dolibarr_leave_request_refuse",
     "dolibarr_leave_request_cancel",
     "dolibarr_leave_request_reopen",
+    "dolibarr_invoice_search",
+    "dolibarr_invoice_get",
 ]
 
 READ_ONLY_TOOL_NAMES = {
+    "dolibarr_invoice_search",
+    "dolibarr_invoice_get",
     *TOOL_NAMES[:8],
     "dolibarr_user_search",
     "dolibarr_lead_search",

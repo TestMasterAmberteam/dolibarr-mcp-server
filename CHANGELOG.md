@@ -6,12 +6,33 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-16
+
+### Added
+
+- Read-only `dolibarr_invoice_search` and `dolibarr_invoice_get` tools for customer-invoice
+  headers and paged invoice lines, including references, dates, statuses, exact decimal
+  totals, quantity, unit price, VAT, discounts, and separate multicurrency amounts.
+- Bounded invoice processing, typed field allowlists, and HTTP/MCP regression coverage
+  for per-request credentials, permissions, pagination, and invalid parameters.
+
+## [0.4.2] - 2026-10-08
+
 ### Added
 
 - Ubuntu LAN deployment units, locked GitHub-release updates with startup rollback,
   and a standalone Jenkins pipeline for operator-selected release tags.
 - Deployment instructions for an HTTP LAN listener and direct HTTPS Dolibarr upstream.
 - Preview-confirmed creation of draft non-opportunity Dolibarr projects through `dolibarr_project_create`.
+
+### Fixed
+
+- GitHub Release creation now explicitly targets this repository when the publishing job runs
+  without a checkout.
+
+### Security
+
+- Updated locked dependencies, including PyJWT 2.15.0, to resolve runtime audit and Trivy findings.
 
 ## [0.4.1] - 2026-09-11
 
