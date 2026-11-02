@@ -114,6 +114,36 @@ use their dedicated action endpoints. The service constrains source states befor
 transition, re-reads state for token confirmation, and refreshes state after the action. Dolibarr
 remains authoritative for permission, overlap, configured approver, and balance rules.
 
+## Project task creation
+
+`TaskService` implements `dolibarr_task_create` with the shared mutation wire format. It reads
+the target project, an optional parent task, and at most 1000 task metadata records through
+`GET /projects/{id}/tasks` without time entries. Closed projects and cross-project parents are
+rejected. The stateless preview token binds the normalized input, project and parent facts, and
+sorted duplicate IDs. Apply rereads those facts before a single fixed `POST /tasks`.
+
+The write sends only `ref=auto`, `fk_project`, `label`, `fk_task_parent`, and explicitly supplied
+description, UTC-noon dates, and `planned_workload` seconds. A positive task ID is required;
+`GET /tasks/{id}` verifies the created facts using a separate allowlisted projection. Failed
+rereads return `partial` with the known ID; unexpected persisted values also return `partial`.
+Task creation does not mutate project state or assign users. See ADR 0009 for failure boundaries.
+
+## Adding people to tasks
+
+`dolibarr_task_assign` requires explicit project, task, and user IDs and a closed role allowlist:
+`TASKCONTRIBUTOR` (default) or `TASKEXECUTIVE`. It rereads task/project/user facts and up to
+1000 task contacts before both preview and apply. A mismatch in task/project ownership,
+closed project, inactive user, or stale token blocks writing. Contact ordering is normalized by
+relationship ID for token generation. Internal active links use Dolibarr contact status `4`;
+external contacts, inactive links, and different roles never count as an existing assignment.
+
+A single `POST /tasks/{id}/contacts` sends the user ID as `fk_socpeople`, the allowlisted role,
+`source=internal`, and `notrigger=0`. No existing relation is removed. The service rereads contacts
+after the attempt, including when the POST reports an error, and returns `partial` if the request
+failed, the reread failed, or the requested active link is absent. Results expose only the requested
+user summary and verified assignment state; task notes and personal contact fields are excluded.
+An already-present requested link returns `no_op` without a POST. See ADR 0010.
+
 ## Failure boundaries
 
 - Dolibarr 401/403 becomes HTTP 401 with `WWW-Authenticate: Bearer`.

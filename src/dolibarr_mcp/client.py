@@ -30,10 +30,13 @@ from dolibarr_mcp.models import (
     DolibarrLeaveTypePayload,
     DolibarrProjectContactPayload,
     DolibarrProjectPayload,
+    DolibarrTaskContactPayload,
+    DolibarrTaskDetailPayload,
     DolibarrTaskPayload,
     DolibarrThirdpartyPayload,
     DolibarrTimeEntryPayload,
     DolibarrUserPayload,
+    TaskRole,
     VerifiedIdentity,
 )
 
@@ -81,6 +84,14 @@ _PROJECT_ADAPTER = TypeAdapter(DolibarrProjectPayload)
 _PROJECT_LIST_ADAPTER = TypeAdapter(list[DolibarrProjectPayload])
 _PROJECT_CONTACT_LIST_ADAPTER = TypeAdapter(list[DolibarrProjectContactPayload])
 _TASK_ADAPTER = TypeAdapter(DolibarrTaskPayload)
+_TASK_DETAIL_ADAPTER = TypeAdapter(DolibarrTaskDetailPayload)
+_TASK_METADATA_LIST_ADAPTER = TypeAdapter(
+    Annotated[list[DolibarrTaskPayload], Field(max_length=_MAX_TASKS)]
+)
+_CREATED_TASK_ID_ADAPTER = TypeAdapter(Annotated[int, Field(gt=0, strict=True)])
+_TASK_CONTACT_LIST_ADAPTER = TypeAdapter(
+    Annotated[list[DolibarrTaskContactPayload], Field(max_length=_MAX_USERS)]
+)
 _TASK_LIST_ADAPTER = TypeAdapter(list[DolibarrTaskPayload])
 _TIME_LIST_ADAPTER = TypeAdapter(list[DolibarrTimeEntryPayload])
 _USER_LIST_ADAPTER = TypeAdapter(list[DolibarrUserPayload])
@@ -101,6 +112,10 @@ _SCHEMA_NAMES = {
     id(_PROJECT_LIST_ADAPTER): "project_list",
     id(_PROJECT_CONTACT_LIST_ADAPTER): "project_contact_list",
     id(_TASK_ADAPTER): "task",
+    id(_TASK_DETAIL_ADAPTER): "task_detail",
+    id(_TASK_METADATA_LIST_ADAPTER): "task_metadata_list",
+    id(_CREATED_TASK_ID_ADAPTER): "created_task_id",
+    id(_TASK_CONTACT_LIST_ADAPTER): "task_contact_list",
     id(_TASK_LIST_ADAPTER): "task_list",
     id(_TIME_LIST_ADAPTER): "time_entry_list",
     id(_USER_LIST_ADAPTER): "user_list",
@@ -264,6 +279,53 @@ class DolibarrClient:
             adapter=_TASK_ADAPTER,
         )
 
+    async def get_task_detail(self, api_key: str, task_id: int) -> DolibarrTaskDetailPayload:
+        """Reread allowlisted task creation facts through the fixed task route."""
+        return await self._get_api(api_key, path=f"tasks/{task_id}", adapter=_TASK_DETAIL_ADAPTER)
+
+    async def get_project_task_metadata(
+        self, api_key: str, project_id: int
+    ) -> list[DolibarrTaskPayload]:
+        """Read at most 1000 tasks without fetching time entries or notes."""
+        return await self._get_api(
+            api_key,
+            path=f"projects/{project_id}/tasks",
+            adapter=_TASK_METADATA_LIST_ADAPTER,
+        )
+
+    async def create_task(self, api_key: str, payload: dict[str, object]) -> int:
+        """Create a task through the fixed official endpoint, with no retries."""
+        return await self._request_api(
+            api_key,
+            method="POST",
+            path="tasks",
+            json_body=payload,
+            adapter=_CREATED_TASK_ID_ADAPTER,
+        )
+
+    async def get_task_contacts(
+        self, api_key: str, task_id: int
+    ) -> list[DolibarrTaskContactPayload]:
+        """Read at most 1000 task relations, discarding personal contact fields."""
+        return await self._get_api(
+            api_key, path=f"tasks/{task_id}/contacts", adapter=_TASK_CONTACT_LIST_ADAPTER
+        )
+
+    async def add_task_user(self, api_key: str, task_id: int, user_id: int, role: TaskRole) -> None:
+        """Add one internal task role, preserving other people and normal triggers."""
+        await self._request_api(
+            api_key,
+            method="POST",
+            path=f"tasks/{task_id}/contacts",
+            json_body={
+                "fk_socpeople": user_id,
+                "type_contact": role,
+                "source": "internal",
+                "notrigger": 0,
+            },
+            adapter=_ANY_ADAPTER,
+        )
+
     async def get_task_timespent(
         self,
         api_key: str,
@@ -332,7 +394,7 @@ class DolibarrClient:
         raise DolibarrResultLimitError
 
     async def get_user(self, api_key: str, user_id: int) -> DolibarrUserPayload:
-        """Return one allowlisted user used for lead assignment."""
+        """Return one allowlisted user used for project and task assignment."""
         return await self._get_api(
             api_key,
             path=f"users/{user_id}",

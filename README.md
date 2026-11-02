@@ -227,7 +227,7 @@ them to 4000 characters, and create/update inputs retain their 4000-character li
 | --- | --- | --- |
 | `dolibarr_thirdparty_search` | optional `query`, `customer_status` | Paged third parties matched on allowlisted fields |
 | `dolibarr_thirdparty_get` | `thirdparty_id` | Allowlisted third-party details and bounded notes |
-| `dolibarr_user_search` | optional `query` | Active users safe to select for lead assignment |
+| `dolibarr_user_search` | optional `query` | Active users safe to select for project and task assignment |
 | `dolibarr_lead_search` | optional query, third party, stage, state, owner | Only projects with `usage_opportunity=1` |
 | `dolibarr_lead_stage_list` | optional stage-code or ID `query` | Operator-configured plus observed stage ID/code pairs, explicitly incomplete |
 | `dolibarr_lead_get` | `project_id` | Lead data, sales stage, project state, and `PROJECTLEADER` owners |
@@ -250,6 +250,8 @@ token to write. The server re-reads the current API state and rejects a missing 
 | `dolibarr_thirdparty_create` | Create a third party with an explicit customer classification |
 | `dolibarr_thirdparty_update` | Update only allowlisted company fields |
 | `dolibarr_project_create` | Create a draft non-opportunity project, with an optional existing third party |
+| `dolibarr_task_create` | Add a task or subtask to an existing draft or open project, with confirmed preview |
+| `dolibarr_task_assign` | Add an active user to a task as contributor or executive, preserving existing assignments |
 | `dolibarr_lead_create` | Create a draft project with `usage_opportunity=1`, existing third party, and stage |
 | `dolibarr_lead_update` | Update lead facts without changing its control fields |
 | `dolibarr_lead_change_status` | Change the opportunity stage using exactly one `stage_id` or resolvable `stage_code` |
@@ -263,6 +265,46 @@ token to write. The server re-reads the current API state and rejects a missing 
 | `dolibarr_leave_request_refuse` | Refuse a submitted request with a required reason |
 | `dolibarr_leave_request_cancel` | Cancel a submitted or approved request |
 | `dolibarr_leave_request_reopen` | Reopen a canceled request to submitted |
+
+Task creation requires `project_id` and `label`. Optional fields are `description` (up to 4000
+characters), `date_start`, `date_end`, `planned_workload_seconds` (a non-negative integer), and
+`parent_task_id`. A parent must belong to the same project. Both ordinary projects and project
+leads are supported; closed projects are rejected. Dates use UTC noon, as with project creation.
+The server generates the reference through Dolibarr (`ref=auto`). It warns about tasks with the
+same normalized name in the project, scanning at most 1000 task records without time entries.
+
+For example, preview `dolibarr_task_create` with:
+
+```json
+{"project_id": 123, "label": "Prepare test plan", "planned_workload_seconds": 7200}
+```
+
+Repeat the same call with `apply=true` and the returned `confirmation_token` to create it.
+The response uses `target_kind="task"`; the result includes `target_id` and the reread `task`.
+If the reread fails or differs from the confirmed values, the outcome is `partial` and the
+created task ID is retained. Inspect that ID before another create. Preview tokens are stale-state
+guards, not idempotency keys: creation is never retried automatically. Task editing, assignment,
+time entry, and deletion are outside this tool's scope.
+
+Task assignment uses `dolibarr_task_assign` with `project_id`, `task_id`, and `user_id`; select
+an active user with `dolibarr_user_search`. The optional `role` is `TASKCONTRIBUTOR` (default,
+contributor) or `TASKEXECUTIVE` (responsible person). For example, preview:
+
+```json
+{"project_id": 123, "task_id": 456, "user_id": 7, "role": "TASKCONTRIBUTOR"}
+```
+
+Repeat with `apply=true` and the returned `confirmation_token`. The task must belong to the
+specified draft/open project and the user must be active. This adds one internal user role per
+call; repeat for additional people. Existing task contacts, other roles, and project membership
+are preserved. External third-party contacts are not supported by this tool. An existing active
+internal user/role produces `no_op`; a different role or an external contact with the same numeric
+ID does not. The preview rejects more than 1000 task-contact records.
+
+The result's `task_assignment` contains the task and project IDs, a safe user summary, role, and
+`assigned`: `true`/`false` after a successful contacts reread, or `null` when verification failed.
+A failed POST or unverified relation returns `partial`; inspect assignments before retrying.
+Assignments are never retried automatically, and preview tokens are not idempotency keys.
 
 `customer_status` accepts `neutral`, `customer`, `prospect`, or `customer_and_prospect`. Create a
 third party intended for a new lead with `customer_status="prospect"`, then pass its returned ID to

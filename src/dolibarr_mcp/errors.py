@@ -118,6 +118,20 @@ class LeaveConfirmationError(DolibarrError):
     public_message = "Leave-request operation preview is missing or stale."
 
 
+class TaskRequestError(DolibarrError):
+    """A task cannot be added to the selected project or parent."""
+
+    status_code = 422
+    public_message = "Invalid task, project, parent, user, or project state."
+
+
+class TaskConfirmationError(DolibarrError):
+    """A task operation preview is missing or stale."""
+
+    status_code = 409
+    public_message = "Task operation preview is missing or stale."
+
+
 class ReportRequestError(DolibarrError):
     """A report request is internally inconsistent after schema validation."""
 
