@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Preview-confirmed `dolibarr_task_create` for tasks and subtasks in existing projects, with
+  optional dates, description, and planned workload in seconds. Parent/project checks,
+  duplicate warnings, stale-preview rejection, and an authoritative reread guard writes.
+
 ## [0.5.0] - 2026-10-16
 
 ### Added

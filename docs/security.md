@@ -64,6 +64,14 @@ hard bounds to limit memory use and model-context amplification.
 
 ## Sales data and write boundary
 
+Project task creation uses the same request-scoped credential and preview/confirmation contract.
+The tool verifies readable project and parent IDs, rejects closed projects and cross-project
+parents, and accepts only bounded task fields. A fixed `POST /tasks` uses `ref=auto`; callers cannot
+set task status, progress, entity, user identity, contacts, arbitrary properties, or credentials.
+Duplicate checks read at most 1000 project tasks without time entries. The reread projection omits
+private/public notes, financial fields, extrafields, contacts, and time entries from tool output.
+No new credential cache, logging, or upstream trust path is introduced (ADR 0009).
+
 Sales support requires Dolibarr 23.0.3-compatible third-party, project, user, and project-contact
 REST endpoints. The MCP server never connects to the Dolibarr database and never accepts or builds
 `sqlfilters`. It does not install a Dolibarr module or call a custom endpoint.

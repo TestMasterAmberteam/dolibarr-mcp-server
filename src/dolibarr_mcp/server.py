@@ -41,6 +41,7 @@ from dolibarr_mcp.models import (
     ProjectState,
     ProjectTimeReport,
     SummaryGroup,
+    TaskCreateInput,
     TaskTimespentReport,
     ThirdpartyCreateInput,
     ThirdpartyDetail,
@@ -53,6 +54,7 @@ from dolibarr_mcp.models import (
 )
 from dolibarr_mcp.reporting import MAX_OUTPUT_ROWS, TimeReportingService
 from dolibarr_mcp.sales import SalesService
+from dolibarr_mcp.tasks import TaskService
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -137,6 +139,7 @@ def create_mcp_server(
     sales = SalesService(client, lead_stage_catalog=lead_stage_catalog)
     leave_requests = LeaveRequestService(client)
     invoices = InvoiceService(client)
+    tasks = TaskService(client)
 
     @server.tool(
         name="dolibarr_whoami",
@@ -456,6 +459,42 @@ def create_mcp_server(
                 data,
                 apply=apply,
                 confirmation_token=confirmation_token,
+            )
+        )
+
+    @server.tool(
+        name="dolibarr_task_create",
+        description=(
+            "Preview or explicitly confirm adding a task to an existing draft or open project. "
+            "Optional parent_task_id must belong to the same project. Workload is in seconds. "
+            "Call first with apply=false, then repeat with confirmation_token and apply=true."
+        ),
+        annotations=_CREATE_ANNOTATIONS,
+    )
+    async def dolibarr_task_create(
+        project_id: PositiveIdentifier,
+        label: ShortText,
+        *,
+        parent_task_id: PositiveIdentifier | None = None,
+        description: NoteText | None = None,
+        date_start: date | None = None,
+        date_end: date | None = None,
+        planned_workload_seconds: Annotated[int, Field(ge=0, le=2_147_483_647)] | None = None,
+        apply: bool = False,
+        confirmation_token: ConfirmationToken | None = None,
+    ) -> MutationResponse:
+        data = TaskCreateInput(
+            project_id=project_id,
+            label=label,
+            parent_task_id=parent_task_id,
+            description=description,
+            date_start=date_start,
+            date_end=date_end,
+            planned_workload_seconds=planned_workload_seconds,
+        )
+        return _mutation_response(
+            await tasks.create(
+                get_request_api_key(), data, apply=apply, confirmation_token=confirmation_token
             )
         )
 

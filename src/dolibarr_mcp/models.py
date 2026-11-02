@@ -152,6 +152,34 @@ class DolibarrTaskPayload(BaseModel):
     lines: list[DolibarrTimeEntryPayload] | None = None
 
 
+class DolibarrTaskDetailPayload(DolibarrTaskPayload):
+    """Task facts used to verify a confirmed create; unrelated fields are discarded."""
+
+    parent_task_id: int | None = Field(default=None, alias="fk_task_parent", gt=0)
+    description: str | None = Field(default=None, max_length=4000)
+    date_start: int | None = Field(default=None, ge=0)
+    date_end: int | None = Field(default=None, ge=0)
+    planned_workload_seconds: int | None = Field(default=None, alias="planned_workload", ge=0)
+
+    @field_validator("parent_task_id", "date_start", "date_end", mode="before")
+    @classmethod
+    def normalize_optional_id_or_date(cls, value: object) -> object:
+        """Dolibarr uses zero and empty values for missing parents and dates."""
+        return None if value in (None, "", 0, "0", -1, "-1") else value
+
+    @field_validator("planned_workload_seconds", mode="before")
+    @classmethod
+    def normalize_workload(cls, value: object) -> object:
+        """Keep a real zero workload while normalizing blank values."""
+        return _blank_to_none(value)
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def bound_description(cls, value: object) -> object:
+        """Bound free text before public output validation."""
+        return value[:4000] if isinstance(value, str) else value
+
+
 class DolibarrProjectPayload(BaseModel):
     """Allowlisted project metadata used by reporting and sales tools."""
 
@@ -894,6 +922,39 @@ class UserSearchResult(BaseModel):
     rows: list[UserSummary]
 
 
+class TaskCreateInput(BaseModel):
+    """Allowlisted fields for a task in an existing project."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    project_id: int = Field(gt=0)
+    label: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+    parent_task_id: int | None = Field(default=None, gt=0)
+    description: str | None = Field(default=None, max_length=4000)
+    date_start: date | None = None
+    date_end: date | None = None
+    planned_workload_seconds: int | None = Field(default=None, ge=0, le=2_147_483_647)
+
+    @model_validator(mode="after")
+    def validate_dates(self) -> TaskCreateInput:
+        """Reject a reversed optional date range before contacting Dolibarr."""
+        if (
+            self.date_start is not None
+            and self.date_end is not None
+            and self.date_start > self.date_end
+        ):
+            msg = "date_start must not be later than date_end"
+            raise ValueError(msg)
+        return self
+
+
+class TaskDetail(TaskCreateInput):
+    """Allowlisted facts reread from the newly created task."""
+
+    task_id: int = Field(gt=0)
+    ref: NonEmptyString
+
+
 class MutationChange(BaseModel):
     """One normalized field difference shown before a write."""
 
@@ -910,7 +971,7 @@ class MutationPreview(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     operation: NonEmptyString
-    target_kind: Literal["thirdparty", "lead", "project", "leave_request"]
+    target_kind: Literal["thirdparty", "lead", "project", "task", "leave_request"]
     target_id: int | None = Field(default=None, gt=0)
     changes: list[MutationChange]
     warnings: list[str]
@@ -931,6 +992,7 @@ class MutationResult(BaseModel):
     thirdparty: ThirdpartyDetail | None = None
     lead: LeadDetail | None = None
     project: ProjectDetail | None = None
+    task: TaskDetail | None = None
     leave_request: LeaveRequestDetail | None = None
 
 
@@ -941,7 +1003,7 @@ class MutationResponse(BaseModel):
 
     operation: NonEmptyString
     phase: Literal["preview", "result"]
-    target_kind: Literal["thirdparty", "lead", "project", "leave_request"]
+    target_kind: Literal["thirdparty", "lead", "project", "task", "leave_request"]
     target_id: int | None = Field(default=None, gt=0)
     changes: list[MutationChange] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -952,6 +1014,7 @@ class MutationResponse(BaseModel):
     thirdparty: ThirdpartyDetail | None = None
     lead: LeadDetail | None = None
     project: ProjectDetail | None = None
+    task: TaskDetail | None = None
     leave_request: LeaveRequestDetail | None = None
 
     @classmethod
@@ -981,6 +1044,8 @@ class MutationResponse(BaseModel):
                 if value.lead is not None
                 else "project"
                 if value.project is not None
+                else "task"
+                if value.operation == "task_create"
                 else "leave_request"
             ),
             target_id=value.target_id,
@@ -991,5 +1056,6 @@ class MutationResponse(BaseModel):
             thirdparty=value.thirdparty,
             lead=value.lead,
             project=value.project,
+            task=value.task,
             leave_request=value.leave_request,
         )
