@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Preview-confirmed `dolibarr_time_entry_create` for the authenticated user's daily task time:
+  work date, fractional hours with exact whole-second conversion, and bounded comment. Includes
+  duplicate warnings, stale-preview checks, verified entry IDs after reread, and partial outcomes
+  without retries. The standard Dolibarr API stores daily input as a timed entry at 00:00 UTC.
 - Preview-confirmed `dolibarr_task_assign` to add active Dolibarr users as task contributors or
   executives, preserving other assignments, verifying same-project ownership and active links,
   and reporting no-op or partial outcomes after a bounded contacts reread.

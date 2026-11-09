@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date  # noqa: TC003 - MCP resolves tool schemas at runtime
+from decimal import Decimal  # noqa: TC003 - MCP resolves tool schemas at runtime
 from typing import TYPE_CHECKING, Annotated
 
 from mcp.server import MCPServer
@@ -49,6 +50,7 @@ from dolibarr_mcp.models import (
     ThirdpartySearchResult,
     ThirdpartyUpdateInput,
     TimeEntriesReport,
+    TimeEntryCreateInput,
     TimeSummary,
     UserSearchResult,
     VerifiedIdentity,
@@ -56,6 +58,7 @@ from dolibarr_mcp.models import (
 from dolibarr_mcp.reporting import MAX_OUTPUT_ROWS, TimeReportingService
 from dolibarr_mcp.sales import SalesService
 from dolibarr_mcp.tasks import TaskService
+from dolibarr_mcp.time_entries import TimeEntryService
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -125,8 +128,43 @@ def _current_identity() -> VerifiedIdentity:
         raise PermissionError(message) from None
 
 
-def _register_task_tools(server: MCPServer[None], tasks: TaskService) -> None:
+def _register_task_tools(
+    server: MCPServer[None], tasks: TaskService, time_entries: TimeEntryService
+) -> None:
     """Register related task writes together, preserving their public order."""
+
+    @server.tool(
+        name="dolibarr_time_entry_create",
+        description=(
+            "Preview or explicitly confirm recording own work for work_date (YYYY-MM-DD), "
+            "task_id, hours, and comment. Hours must be positive, at most 24, and convert to "
+            "whole seconds. Daily entries use 00:00 UTC in Dolibarr's timed-entry API. "
+            "Call first with apply=false, then repeat with confirmation_token and apply=true. "
+            "Never retry an uncertain write without inspecting recorded time."
+        ),
+        annotations=_CREATE_ANNOTATIONS,
+    )
+    async def dolibarr_time_entry_create(
+        work_date: date,
+        task_id: PositiveIdentifier,
+        hours: Annotated[Decimal, Field(gt=0, le=24, max_digits=10, decimal_places=6)],
+        comment: NoteText,
+        *,
+        apply: bool = False,
+        confirmation_token: ConfirmationToken | None = None,
+    ) -> MutationResponse:
+        data = TimeEntryCreateInput(
+            work_date=work_date, task_id=task_id, hours=hours, comment=comment
+        )
+        return _mutation_response(
+            await time_entries.create(
+                get_request_api_key(),
+                _current_identity(),
+                data,
+                apply=apply,
+                confirmation_token=confirmation_token,
+            )
+        )
 
     @server.tool(
         name="dolibarr_task_create",
@@ -211,6 +249,7 @@ def create_mcp_server(
     leave_requests = LeaveRequestService(client)
     invoices = InvoiceService(client)
     tasks = TaskService(client)
+    time_entries = TimeEntryService(client)
 
     @server.tool(
         name="dolibarr_whoami",
@@ -533,7 +572,7 @@ def create_mcp_server(
             )
         )
 
-    _register_task_tools(server, tasks)
+    _register_task_tools(server, tasks, time_entries)
 
     @server.tool(
         name="dolibarr_lead_search",

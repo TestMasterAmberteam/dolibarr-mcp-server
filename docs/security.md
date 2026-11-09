@@ -123,6 +123,22 @@ configured inactive stages, or require one unambiguous observed ID before the or
 preview-token flow. The authoritative reread must expose the resolved ID, otherwise the result is
 `partial` rather than `applied`.
 
+## Daily time-registration boundary
+
+Daily registration uses only fixed task/project/time GETs and one confirmed
+`POST /tasks/{id}/addtimespent`. It records the caller's own time through `user_id=0`; tool inputs
+cannot select another employee, product, progress, or arbitrary payload field. Identity comes
+from the already verified HTTP request. Hours use bounded exact decimals, comments are limited
+to 4000 characters, and processing retains the existing 50,000-line task limit. Task/project
+ownership and project state are checked before preview and apply.
+
+Tokens bind the caller ID, normalized proposal, task/project projections, and sorted entries for
+that caller and UTC day. Only the new requested entry is returned, without other users' comments.
+Duplicate warnings identify matching own entries. No credentials, input comments, identities,
+or upstream time payloads are logged. Post-write errors or ambiguous rereads return `partial`
+without retry. Stateless tokens do not guarantee idempotency under concurrency or stale reads.
+The standard API forces timed entries at the disclosed 00:00 UTC placeholder (ADR 0011).
+
 ## Customer-invoice read boundary
 
 Invoice tools use only fixed `GET /invoices` and `GET /invoices/{positive_id}` routes with the

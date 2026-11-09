@@ -5,7 +5,7 @@
 [![CodeQL](https://github.com/TestMasterAmberteam/dolibarr-mcp-server/actions/workflows/codeql.yml/badge.svg)](https://github.com/TestMasterAmberteam/dolibarr-mcp-server/actions/workflows/codeql.yml)
 
 A remote, stateless [Model Context Protocol](https://modelcontextprotocol.io/) server that
-authenticates each caller with that caller's own Dolibarr API key. It exposes 33 allowlisted tools
+authenticates each caller with that caller's own Dolibarr API key. It exposes 36 allowlisted tools
 for identity, time reporting, sales records, customer invoices, and leave requests while preserving
 Dolibarr's per-user permissions.
 
@@ -24,6 +24,7 @@ by the Dolibarr project or its maintainers.
 - request-scoped safe identity and credential context; API keys are actively cleared and never
   retained or returned;
 - typed time-entry detail and aggregation by day, user, project, task, month, and ISO week;
+- preview-confirmed daily time registration for the caller's own task, date, hours, and comment;
 - API-only third-party and project-lead search with allowlisted typed projections;
 - read-only customer-invoice search, header details, and paged invoice lines;
 - typed leave-type lookup and leave-request search, detail, create, update, submit, approve,
@@ -43,7 +44,7 @@ flowchart LR
     H --> B[Strict Bearer middleware]
     B -->|DOLAPIKEY: user key| D[Dolibarr /users/info]
     D -->|validated safe profile| X[request-scoped auth and credential contexts]
-    X --> M[MCPServer: 33 allowlisted tools]
+    X --> M[MCPServer: 36 allowlisted tools]
     M -->|DOLAPIKEY: same user key| R[Fixed Dolibarr REST operations]
     R -->|allowlisted reporting, sales, invoice, and leave data| M
     M --> P[Stateless mutation preview and stale-state token]
@@ -187,6 +188,30 @@ Grouped tools accept `limit` from 1 to 500 and report `truncated` explicitly. De
 Aggregate tools never return notes. Only `dolibarr_task_timespent` and `dolibarr_time_entries`
 return notes, truncated to 4000 characters.
 
+To record a day's work, use `dolibarr_time_entry_create` with `work_date`, `task_id`, `hours`,
+and `comment`. It always records time for the authenticated user. For example:
+
+```text
+dolibarr_time_entry_create(work_date="2026-11-09", task_id=123,
+                           hours=2.5, comment="Implementation and review")
+# Review the preview, then repeat the same arguments with:
+# apply=true, confirmation_token="<token from preview>"
+```
+
+Hours may be fractional, must be greater than zero and at most 24 per entry, and must convert
+exactly to whole seconds; values requiring rounding are rejected. Dates start at `1970-01-01`.
+The comment is required, may be empty, and accepts at most 4000 characters. Several entries per
+day are allowed. A matching existing entry produces a duplicate warning before confirmation.
+The tool checks the task and project, rejects closed projects, and leaves task progress unchanged.
+
+Dolibarr's standard API stores a timed entry, so daily input is represented as **00:00 UTC**;
+it does not set Dolibarr's native date-only flag. The preview discloses this limitation.
+After a single confirmed POST, the tool rereads time and returns `time_entry` with the new entry
+ID and verified daily facts. `target_kind=task` and `target_id` refer to the task. Uncertain
+writes or failed/mismatched rereads return `partial`; inspect recorded time before retrying.
+Confirmation is stateless and cannot prevent simultaneous duplicate requests. See
+[ADR 0011](docs/adr/0011-confirmed-daily-time-registration.md).
+
 Customer invoice tools use the official Dolibarr 23.0.3-compatible Invoices REST API:
 
 | Tool | Inputs | Output |
@@ -250,6 +275,7 @@ token to write. The server re-reads the current API state and rejects a missing 
 | `dolibarr_thirdparty_create` | Create a third party with an explicit customer classification |
 | `dolibarr_thirdparty_update` | Update only allowlisted company fields |
 | `dolibarr_project_create` | Create a draft non-opportunity project, with an optional existing third party |
+| `dolibarr_time_entry_create` | Record own daily task time with a date, hours, and comment |
 | `dolibarr_task_create` | Add a task or subtask to an existing draft or open project, with confirmed preview |
 | `dolibarr_task_assign` | Add an active user to a task as contributor or executive, preserving existing assignments |
 | `dolibarr_lead_create` | Create a draft project with `usage_opportunity=1`, existing third party, and stage |
