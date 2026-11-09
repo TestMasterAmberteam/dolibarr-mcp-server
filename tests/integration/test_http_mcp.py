@@ -38,6 +38,7 @@ TOOL_NAMES = [
     "dolibarr_thirdparty_update",
     "dolibarr_user_search",
     "dolibarr_project_create",
+    "dolibarr_time_entry_create",
     "dolibarr_task_create",
     "dolibarr_task_assign",
     "dolibarr_lead_search",
@@ -78,6 +79,7 @@ READ_ONLY_TOOL_NAMES = {
 CREATE_TOOL_NAMES = {
     "dolibarr_thirdparty_create",
     "dolibarr_project_create",
+    "dolibarr_time_entry_create",
     "dolibarr_task_create",
     "dolibarr_task_assign",
     "dolibarr_lead_create",

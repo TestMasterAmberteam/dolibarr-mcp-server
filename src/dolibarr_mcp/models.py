@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date  # noqa: TC003 - Pydantic resolves report fields at runtime
+from datetime import date
+from decimal import Decimal  # noqa: TC003 - Pydantic resolves fields at runtime
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -935,6 +936,46 @@ class UserSearchResult(BaseModel):
     rows: list[UserSummary]
 
 
+class TimeEntryCreateInput(BaseModel):
+    """One calendar day's work, expressed in hours with exact whole-second precision."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    task_id: int = Field(gt=0)
+    work_date: date = Field(ge=date(1970, 1, 1))
+    hours: Decimal = Field(gt=0, le=24, max_digits=10, decimal_places=6)
+    comment: str = Field(max_length=4000)
+
+    @model_validator(mode="after")
+    def validate_duration(self) -> TimeEntryCreateInput:
+        """Never silently round a submitted duration."""
+        seconds = self.hours * 3600
+        if seconds != seconds.to_integral_value():
+            msg = "hours must represent a whole number of seconds"
+            raise ValueError(msg)
+        return self
+
+    @property
+    def duration_seconds(self) -> int:
+        """Return the exact upstream duration."""
+        return int(self.hours * 3600)
+
+
+class TimeEntryDetail(BaseModel):
+    """Verified daily entry; no other user's time or notes are returned."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    entry_id: int = Field(gt=0)
+    task_id: int = Field(gt=0)
+    project_id: int = Field(gt=0)
+    user_id: int = Field(gt=0)
+    work_date: date
+    duration_seconds: int = Field(gt=0)
+    hours: Decimal
+    comment: str = Field(max_length=4000)
+
+
 class TaskCreateInput(BaseModel):
     """Allowlisted fields for a task in an existing project."""
 
@@ -1019,6 +1060,7 @@ class MutationResult(BaseModel):
     project: ProjectDetail | None = None
     task: TaskDetail | None = None
     task_assignment: TaskAssignmentDetail | None = None
+    time_entry: TimeEntryDetail | None = None
     leave_request: LeaveRequestDetail | None = None
 
 
@@ -1042,6 +1084,7 @@ class MutationResponse(BaseModel):
     project: ProjectDetail | None = None
     task: TaskDetail | None = None
     task_assignment: TaskAssignmentDetail | None = None
+    time_entry: TimeEntryDetail | None = None
     leave_request: LeaveRequestDetail | None = None
 
     @classmethod
@@ -1072,7 +1115,7 @@ class MutationResponse(BaseModel):
                 else "project"
                 if value.project is not None
                 else "task"
-                if value.operation in {"task_create", "task_assign"}
+                if value.operation in {"task_create", "task_assign", "time_entry_create"}
                 else "leave_request"
             ),
             target_id=value.target_id,
@@ -1085,5 +1128,6 @@ class MutationResponse(BaseModel):
             project=value.project,
             task=value.task,
             task_assignment=value.task_assignment,
+            time_entry=value.time_entry,
             leave_request=value.leave_request,
         )

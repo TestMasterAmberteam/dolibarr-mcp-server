@@ -126,15 +126,17 @@ the initial direct push worked.
 When the repository source is stable and CI is green:
 
 1. Choose the release version according to Semantic Versioning.
-2. Update `pyproject.toml`, `src/dolibarr_mcp/__init__.py`, the CLI version test, Docker and Compose
-   examples, and any version-specific documentation.
+2. Update only `project.version` in `pyproject.toml`, then run `uv lock` and
+   `uv sync --locked --all-groups`. Runtime, CLI, and MCP versions come from installed package
+   metadata; tests, Dockerfile, and Compose contain no application-version constants to edit.
 3. Move the relevant `CHANGELOG.md` entries from `Unreleased` to
    `## [VERSION] - YYYY-MM-DD`, using the actual release date.
 4. Run every local gate again and merge the release pull request.
 5. Create and push an annotated tag matching the package version:
 
    ```powershell
-   $Version = "0.5.0"
+   $Version = python -c "import tomllib; from pathlib import Path; print(tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8'))['project']['version'])"
+   if ($LASTEXITCODE -ne 0) { throw "Cannot read project version" }
    git tag -a "v$Version" -m "Release v$Version"
    git push origin "v$Version"
    ```

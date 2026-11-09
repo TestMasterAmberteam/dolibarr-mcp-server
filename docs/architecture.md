@@ -7,7 +7,7 @@ The service has four explicit layers:
 1. Starlette/Uvicorn owns HTTP, health routes, correlation IDs, and startup/shutdown.
 2. Transport security and Bearer middleware validate `Host`, `Origin`, header syntax, and the
    presented key before MCP parses a message.
-3. One `MCPServer` instance dispatches 33 allowlisted reporting, sales, invoice, and leave tools.
+3. One `MCPServer` instance dispatches 36 allowlisted reporting, sales, invoice, and leave tools.
 4. `DolibarrClient` owns one `httpx2.AsyncClient` pool, the fixed `/users/info` operation, and
    fixed project, third-party, contact-relation, user-label, time-entry, leave-type, and
    leave-request REST operations.
@@ -143,6 +143,20 @@ after the attempt, including when the POST reports an error, and returns `partia
 failed, the reread failed, or the requested active link is absent. Results expose only the requested
 user summary and verified assignment state; task notes and personal contact fields are excluded.
 An already-present requested link returns `no_op` without a POST. See ADR 0010.
+
+## Daily time registration
+
+`TimeEntryService` provides `dolibarr_time_entry_create(work_date, task_id, hours, comment)`.
+It uses the verified request identity without another user lookup, reads the task/project and
+bounded time collection, and binds normalized inputs and that user's sorted UTC-day entries
+to the preview token. Closed projects, inconsistent resource IDs, and stale tokens block writes.
+Decimal hours must convert exactly to positive whole seconds, up to 24 hours per entry.
+
+One fixed `POST /tasks/{id}/addtimespent` supplies a midnight UTC date-time, duration seconds,
+`user_id=0` (the caller), note, and `progress=-1`. The official API forces a timed entry, so the
+tool discloses that it cannot set the native date-only flag. Rereading the bounded time collection
+must identify exactly one new matching entry. Otherwise, or after a POST error, the result is
+`partial`. No retries or mutation state are retained. See ADR 0011 for concurrency limitations.
 
 ## Failure boundaries
 

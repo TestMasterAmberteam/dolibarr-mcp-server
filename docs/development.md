@@ -68,13 +68,26 @@ Dolibarr upstream.
 
 ## Releases
 
+`pyproject.toml` (`project.version`) is the only manually maintained application-version source.
+`dolibarr_mcp.__version__` reads installed distribution metadata through the standard-library
+`importlib.metadata`; CLI and MCP versions use that same value. Source checkouts must be installed
+with `uv sync` before use. A version bump requires changing `project.version`, running `uv lock`
+to update the generated lockfile, then `uv sync --locked --all-groups` to refresh local metadata.
+The CLI tests compare the installed metadata with the project version, so stale installations fail.
+
+Dockerfile has no static OCI version label. The release workflow generates image tags and labels
+from the verified Git tag. Compose defaults to the local image tag `dev`; optional `APP_VERSION`
+interpolation only selects an image tag and is not an application setting. Historical changelog
+headings and published Git tags retain their release numbers.
+
 Tags use `vMAJOR.MINOR.PATCH` and must equal `project.version`. The release workflow rebuilds and
 checks the package, creates checksums and an SBOM, publishes a multi-architecture GHCR image, adds
 attestations, and creates a GitHub Release. PyPI publishing remains disabled unless maintainers
 configure Trusted Publishing, protect the `pypi` environment, and set `PUBLISH_TO_PYPI=true`.
 
 Before creating a tag, move the release notes from `Unreleased` to a dated version heading in
-`CHANGELOG.md` and verify that `pyproject.toml` and `dolibarr_mcp.__version__` agree. Repository
+`CHANGELOG.md`; do not add another version constant to code, tests, Dockerfile, or Compose. The
+release workflow checks the tag against both `project.version` and the installed metadata. Repository
 owners must enable release immutability in GitHub settings before the first release if published
 artifacts are expected to be immutable. See the [GitHub publication checklist](github-publishing.md)
 for initial repository setup and release order.

@@ -326,6 +326,30 @@ class DolibarrClient:
             adapter=_ANY_ADAPTER,
         )
 
+    async def create_time_entry(
+        self,
+        api_key: str,
+        *,
+        task_id: int,
+        work_date: str,
+        duration_seconds: int,
+        comment: str,
+    ) -> None:
+        """Add own time through the official fixed endpoint, without progress changes or retries."""
+        await self._request_api(
+            api_key,
+            method="POST",
+            path=f"tasks/{task_id}/addtimespent",
+            json_body={
+                "date": f"{work_date} 00:00:00",
+                "duration": duration_seconds,
+                "user_id": 0,
+                "note": comment,
+                "progress": -1,
+            },
+            adapter=_ANY_ADAPTER,
+        )
+
     async def get_task_timespent(
         self,
         api_key: str,
