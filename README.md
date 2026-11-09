@@ -85,22 +85,32 @@ The server listens on `127.0.0.1:8000` by default. `dolibarr-mcp --help` and
 `dolibarr-mcp --version` do not require application configuration. Use
 `dolibarr-mcp --config path/to/config.toml` to select another file explicitly.
 
+The application version is maintained only in `pyproject.toml` (`project.version`). Package
+metadata supplies `dolibarr_mcp.__version__`, the CLI version, and the MCP server version.
+After a version change, run `uv lock` followed by `uv sync --locked --all-groups` to refresh the
+generated lockfile and installed metadata.
+
 For the operator-requested Ubuntu HTTP LAN installation and Jenkins release updates,
 see [LAN deployment](docs/deployment-lan.md).
 
 ## Docker and Compose
 
 ```bash
-docker build -t dolibarr-mcp-server:0.5.0 .
+docker build -t dolibarr-mcp-server:dev .
 docker run --rm --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m \
   -p 8000:8000 \
   --mount type=bind,src="$PWD/config.toml",dst=/app/config.toml,readonly \
-  dolibarr-mcp-server:0.5.0
+  dolibarr-mcp-server:dev
 ```
 
 For a container, set `host = "0.0.0.0"` and the external Host allowlist in `config.toml` before
 running Docker or `docker compose up --build`. Compose mounts that file read-only. Neither the
 image, Compose file, nor server configuration contains a user API key.
+
+Compose tags local builds as `dolibarr-mcp-server:dev` by default. Optional `APP_VERSION`
+interpolation selects a different local image tag; it does not change the application version
+or server configuration. Release image tags and the OCI version label are generated from the
+Git release tag by the release workflow, which verifies that the tag matches `project.version`.
 
 ## Configuration
 

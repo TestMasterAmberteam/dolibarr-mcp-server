@@ -180,6 +180,15 @@ permissions, configured approver, and negative-balance policy. The adapter never
 rules or claims that a request is affordable. Writes are not retried automatically; an unexpected
 post-action status is returned as a partial result with refreshed state.
 
+## Package version metadata
+
+The application reads its version from installed distribution metadata generated from
+`pyproject.toml`, without filesystem discovery of a source checkout or an environment override.
+CLI and MCP share that value. Release tags are checked against the project and installed package
+versions before publishing images or packages. OCI release labels come from the verified Git tag;
+Compose's optional image-tag interpolation does not become server configuration. Authentication,
+credential lifetime, logging, and upstream trust boundaries are unchanged.
+
 ## Secret rotation and incident response
 
 Users rotate or revoke their keys in Dolibarr. A suspected leak should be handled there immediately;

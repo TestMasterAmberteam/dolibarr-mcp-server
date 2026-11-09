@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import builtins
+import tomllib
 from collections.abc import Mapping, Sequence
+from importlib.metadata import version
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 
+from dolibarr_mcp import __version__
 from dolibarr_mcp.__main__ import main
 from dolibarr_mcp.app import build_app_from_config
 
@@ -62,7 +65,14 @@ def test_version_does_not_require_server_configuration(capsys: pytest.CaptureFix
     with pytest.raises(SystemExit) as captured:
         main(["--version"])
     assert captured.value.code == 0
-    assert capsys.readouterr().out.strip() == "dolibarr-mcp 0.5.0"
+    assert capsys.readouterr().out.strip() == f"dolibarr-mcp {version('dolibarr-mcp-server')}"
+
+
+def test_installed_version_matches_project_metadata() -> None:
+    project_file = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    project_version = tomllib.loads(project_file.read_text(encoding="utf-8"))["project"]["version"]
+    assert version("dolibarr-mcp-server") == project_version
+    assert __version__ == project_version
 
 
 def test_missing_required_configuration_exits_safely(

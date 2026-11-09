@@ -19,6 +19,12 @@ All notable changes to this project are documented here. The format follows
   optional dates, description, and planned workload in seconds. Parent/project checks,
   duplicate warnings, stale-preview rejection, and an authoritative reread guard writes.
 
+### Changed
+
+- Centralized the application version in `pyproject.toml`; runtime, CLI, and MCP versions now
+  read installed package metadata. Removed static Docker/Compose version values, made CLI tests
+  independent of a particular release number, and simplified the documented release procedure.
+
 ## [0.5.0] - 2026-10-16
 
 ### Added
