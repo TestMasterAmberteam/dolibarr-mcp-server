@@ -12,6 +12,12 @@ application settings there. The server does not load `.env` or application confi
 environment variables. Use a fictitious or isolated Dolibarr test account; the automated suite
 uses mock transports and requires no Internet or real key.
 
+The development group explicitly requires AnyIO 4.16.0 or newer for its pytest plugin's
+compatibility with pytest 9.2 (`CallSpec` replaces the deprecated `CallSpec2` import). Keep
+`filterwarnings = ["error"]` enabled; update the plugin dependency instead of suppressing pytest
+deprecations or editing installed packages. After dependency changes, run `uv lock`,
+`uv sync --locked --all-groups`, and the full test suite so plugin-loading failures are exercised.
+
 ## Required local gates
 
 ```bash
