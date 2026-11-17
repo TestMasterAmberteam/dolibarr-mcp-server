@@ -189,6 +189,29 @@ versions before publishing images or packages. OCI release labels come from the 
 Compose's optional image-tag interpolation does not become server configuration. Authentication,
 credential lifetime, logging, and upstream trust boundaries are unchanged.
 
+## Project and agenda history boundary
+
+Projects and agenda use the same per-request credential and shared pool. New tools expose no raw
+SQL, paths, payloads, mail recipients, owner impersonation, or key arguments. Only fixed positive
+project/customer IDs compile to internal agenda search criteria; no caller-provided filter string
+or owner-list parameter is forwarded. Details and matching search rows pass through individual
+GET authorization plus readable linked-project/customer checks, compensating for broader agenda
+list access in older supported Dolibarr versions. Forbidden results do not affect returned counts.
+
+Incoming event text is bounded and only explicit public fields are projected. Email addresses,
+headers, resource assignments, linked-object payloads and extrafields are not returned. Date and
+timezone validation errors are deliberately generic; expected upstream errors expose only their
+existing fixed public message. The transport diagnostic field allowlist is unchanged.
+
+Own-event creation and one-record deletion require fresh state-matching previews. Delete includes
+all allowlisted incoming text and modification time in its fingerprint, not just the displayed
+4000-character excerpt. Only one mutation request is made, without retries, followed by a reread;
+401/403 is never considered proof of deletion. Uncertain results remain partial and show known
+event IDs for an authorized follow-up read. Tokens do not expire by clock time and do not replace
+authorization. Changes between the final read and deletion cannot be atomically excluded by the
+upstream API. Custom Dolibarr triggers can have administrator-configured side effects; the adapter
+itself has no send-mail or invitation route. See [ADR 0012](adr/0012-project-history-and-confirmed-agenda-events.md).
+
 ## Secret rotation and incident response
 
 Users rotate or revoke their keys in Dolibarr. A suspected leak should be handled there immediately;

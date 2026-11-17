@@ -39,7 +39,9 @@ async def test_invoice_tools_use_request_key_and_safe_public_schema(
         ) as mcp_client,
     ):
         tools = await mcp_client.list_tools()
-        for tool in tools.tools[-2:]:
+        invoice_tools = [tool for tool in tools.tools if tool.name.startswith("dolibarr_invoice_")]
+        assert len(invoice_tools) == 2
+        for tool in invoice_tools:
             assert tool.annotations is not None
             assert tool.annotations.read_only_hint
             assert tool.annotations.idempotent_hint

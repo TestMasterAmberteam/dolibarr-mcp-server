@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, TypeVar
 import httpx2
 from pydantic import Field, TypeAdapter, ValidationError
 
+from dolibarr_mcp.agenda_models import DolibarrAgendaEventPayload
 from dolibarr_mcp.errors import (
     DolibarrConflictError,
     DolibarrNotFoundError,
@@ -58,6 +59,7 @@ _MAX_SALES_RECORDS = 10_000
 _MAX_LEAVE_REQUESTS = 10_000
 _MAX_LEAVE_TYPES = 1_000
 _MAX_INVOICES = 10_000
+_MAX_AGENDA_EVENTS = 10_000
 _MAX_VALIDATION_DIAGNOSTICS = 20
 _MAX_DIAGNOSTIC_TOKEN_LENGTH = 64
 _UNSAFE_DIAGNOSTIC_CHARACTER = re.compile(r"[^A-Za-z0-9_-]")
@@ -99,6 +101,11 @@ _THIRDPARTY_ADAPTER = TypeAdapter(DolibarrThirdpartyPayload)
 _THIRDPARTY_LIST_ADAPTER = TypeAdapter(list[DolibarrThirdpartyPayload])
 _INTEGER_ADAPTER = TypeAdapter(int)
 _ANY_ADAPTER = TypeAdapter(object)
+_AGENDA_ADAPTER = TypeAdapter(DolibarrAgendaEventPayload)
+_AGENDA_LIST_ADAPTER = TypeAdapter(
+    Annotated[list[DolibarrAgendaEventPayload], Field(max_length=_UPSTREAM_PAGE_SIZE)]
+)
+_CREATED_EVENT_ID_ADAPTER = TypeAdapter(Annotated[int, Field(gt=0, strict=True)])
 
 _SCHEMA_NAMES = {
     id(_IDENTITY_ADAPTER): "identity",
@@ -123,6 +130,9 @@ _SCHEMA_NAMES = {
     id(_THIRDPARTY_LIST_ADAPTER): "thirdparty_list",
     id(_INTEGER_ADAPTER): "integer",
     id(_ANY_ADAPTER): "untyped",
+    id(_AGENDA_ADAPTER): "agenda_event",
+    id(_AGENDA_LIST_ADAPTER): "agenda_event_list",
+    id(_CREATED_EVENT_ID_ADAPTER): "created_agenda_event_id",
 }
 
 HttpMethod = Literal["GET", "POST", "PUT", "DELETE"]
@@ -713,6 +723,71 @@ class DolibarrClient:
             if len(current) < _UPSTREAM_PAGE_SIZE:
                 return rows
         raise DolibarrResultLimitError
+
+    async def list_agenda_events(
+        self, api_key: str, *, project_id: int | None = None, thirdparty_id: int | None = None
+    ) -> list[DolibarrAgendaEventPayload]:
+        """Read a bounded stable list; services reauthorize matching individual records."""
+        rows: list[DolibarrAgendaEventPayload] = []
+        seen: set[int] = set()
+        properties = (
+            "id,label,type_code,type_label,type,code,datep,datef,datep2,fulldayevent,"
+            "percentage,userownerid,fk_project,socid,fk_soc"
+        )
+        criteria: list[str] = []
+        if project_id is not None:
+            criteria.append(f"(t.fk_project:=:{project_id})")
+        if thirdparty_id is not None:
+            criteria.append(f"(t.fk_soc:=:{thirdparty_id})")
+        for page in range(_MAX_AGENDA_EVENTS // _UPSTREAM_PAGE_SIZE):
+            params: dict[str, str | int] = {
+                "limit": _UPSTREAM_PAGE_SIZE,
+                "page": page,
+                "sortfield": "t.id",
+                "sortorder": "ASC",
+                "properties": properties,
+            }
+            if criteria:
+                params["sqlfilters"] = " and ".join(criteria)
+            current = await self._get_api(
+                api_key,
+                path="agendaevents",
+                params=params,
+                adapter=_AGENDA_LIST_ADAPTER,
+            )
+            for row in current:
+                if row.event_id in seen or (rows and row.event_id <= rows[-1].event_id):
+                    raise InvalidDolibarrResponseError
+                seen.add(row.event_id)
+                rows.append(row)
+            if len(current) < _UPSTREAM_PAGE_SIZE:
+                return rows
+        raise DolibarrResultLimitError
+
+    async def get_agenda_event(self, api_key: str, event_id: int) -> DolibarrAgendaEventPayload:
+        """Use individual GET permissions, including event ownership checks."""
+        payload = await self._get_api(
+            api_key, path=f"agendaevents/{event_id}", adapter=_AGENDA_ADAPTER
+        )
+        if payload.event_id != event_id:
+            raise InvalidDolibarrResponseError
+        return payload
+
+    async def create_agenda_event(self, api_key: str, payload: dict[str, object]) -> int:
+        """Create one manual history record; never call a mail or invitation endpoint."""
+        return await self._request_api(
+            api_key,
+            method="POST",
+            path="agendaevents",
+            json_body=payload,
+            adapter=_CREATED_EVENT_ID_ADAPTER,
+        )
+
+    async def delete_agenda_event(self, api_key: str, event_id: int) -> None:
+        """Delete exactly one event; the service independently verifies absence."""
+        await self._request_api(
+            api_key, method="DELETE", path=f"agendaevents/{event_id}", adapter=_ANY_ADAPTER
+        )
 
     async def create_project(self, api_key: str, payload: dict[str, object]) -> int:
         """Create one project through the fixed official endpoint."""
