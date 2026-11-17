@@ -24,6 +24,7 @@ All notable changes to this project are documented here. The format follows
 - Centralized the application version in `pyproject.toml`; runtime, CLI, and MCP versions now
   read installed package metadata. Removed static Docker/Compose version values, made CLI tests
   independent of a particular release number, and simplified the documented release procedure.
+
 ### Fixed
 
 - Updated locked AnyIO from 4.14.2 to 4.16.0 and required the compatible pytest plugin in the
