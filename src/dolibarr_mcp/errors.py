@@ -137,3 +137,17 @@ class ReportRequestError(DolibarrError):
 
     status_code = 422
     public_message = "Invalid report parameters."
+
+
+class AgendaRequestError(DolibarrError):
+    """Agenda parameters or related object links are inconsistent."""
+
+    status_code = 422
+    public_message = "Invalid agenda dates, timezone, type, or project/third-party links."
+
+
+class AgendaConfirmationError(DolibarrError):
+    """The confirmed parameters or current event/project state no longer match."""
+
+    status_code = 409
+    public_message = "Agenda operation preview is missing or stale."

@@ -7,7 +7,8 @@ The service has four explicit layers:
 1. Starlette/Uvicorn owns HTTP, health routes, correlation IDs, and startup/shutdown.
 2. Transport security and Bearer middleware validate `Host`, `Origin`, header syntax, and the
    presented key before MCP parses a message.
-3. One `MCPServer` instance dispatches 36 allowlisted reporting, sales, invoice, and leave tools.
+3. One `MCPServer` instance dispatches 42 allowlisted project, agenda, reporting, sales, invoice,
+   and leave tools.
 4. `DolibarrClient` owns one `httpx2.AsyncClient` pool, the fixed `/users/info` operation, and
    fixed project, third-party, contact-relation, user-label, time-entry, leave-type, and
    leave-request REST operations.
@@ -157,6 +158,28 @@ One fixed `POST /tasks/{id}/addtimespent` supplies a midnight UTC date-time, dur
 tool discloses that it cannot set the native date-only flag. Rereading the bounded time collection
 must identify exactly one new matching entry. Otherwise, or after a POST error, the result is
 `partial`. No retries or mutation state are retained. See ADR 0011 for concurrency limitations.
+
+## Project and agenda history
+
+`ProjectService` reads ordinary projects and opportunities without changing `SalesService` lead
+semantics. `AgendaService` keeps project notes separate from history events. The six schemas are
+registered in `agenda_tools.py`; upstream aliases and public projections live in `agenda_models.py`.
+List scans use fixed identifier ordering and 10,000-record bounds. Positive project/customer IDs
+may compile into fixed agenda API criteria; owner/type/status/date filtering remains local.
+Every matching event and its project/customer links receive individual read-access checks. A
+forbidden or disappeared search candidate is omitted without leaking its fields or count.
+
+`agenda_dates.py` validates local wall times and DST folds/gaps. Date-only entries span midnight
+through 23:59:59 on the inclusive last local day, with independently computed boundaries. Timezone
+interpretation is explicit because Dolibarr stores instants and an all-day flag, not an IANA zone.
+
+Create binds caller ownership, project/customer state, dates, type, completion, description and
+duplicate IDs to the existing stateless token canonicalization. Delete binds the whole allowlisted
+event state, including untruncated allowed notes and modification time. Apply rereads before one
+POST or DELETE; a further read verifies the result. Ambiguous outcomes remain partial even if a
+matching event is discovered. No idempotency key, atomic compare/delete, invitation or email send
+endpoint is claimed. Only sanitized domain errors become intentional SDK tool errors.
+See [ADR 0012](adr/0012-project-history-and-confirmed-agenda-events.md).
 
 ## Failure boundaries
 

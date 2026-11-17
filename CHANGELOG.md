@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.7.0] - 2026-11-17
+
+### Added
+
+- `dolibarr_project_search` and `dolibarr_project_get` for ordinary projects and opportunities,
+  without an open-project default or changes to the existing lead tools.
+- Project history through `dolibarr_agenda_event_search` and `dolibarr_agenda_event_get`, including
+  automatic events, allowlisted details, explicit pagination and per-record access checks.
+- Preview-confirmed manual agenda creation and single-event deletion, with caller ownership,
+  coherent project/customer links, duplicate checks, stale-state protection, and one-shot writes.
+  Uncertain outcomes include safe reconciliation hints without retrying.
+- Human-readable local dates and IANA timezones for agenda events, inclusive all-day ranges,
+  DST validation, and an explicit `tzdata` runtime dependency for portable timezone support.
+
+### Changed
+
+- Bumped the single project version source to 0.7.0 for the additive MCP tool surface.
+
 ## [0.6.0] - 2026-11-09
 
 ### Added

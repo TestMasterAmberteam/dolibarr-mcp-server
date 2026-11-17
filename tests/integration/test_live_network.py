@@ -103,6 +103,12 @@ async def test_uvicorn_initialize_list_call_and_clean_shutdown(settings: Setting
             "dolibarr_leave_request_reopen",
             "dolibarr_invoice_search",
             "dolibarr_invoice_get",
+            "dolibarr_project_search",
+            "dolibarr_project_get",
+            "dolibarr_agenda_event_search",
+            "dolibarr_agenda_event_get",
+            "dolibarr_agenda_event_create",
+            "dolibarr_agenda_event_delete",
         ]
         assert result.structured_content == {
             "user_id": 88,

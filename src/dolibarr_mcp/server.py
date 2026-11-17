@@ -12,6 +12,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field, ValidationError
 
 from dolibarr_mcp import __version__
+from dolibarr_mcp.agenda_tools import register_project_agenda_tools
 from dolibarr_mcp.credentials import get_request_api_key
 from dolibarr_mcp.invoice_models import (  # noqa: TC001 - MCP resolves schemas at runtime
     InvoiceDetail,
@@ -1093,4 +1094,4 @@ def create_mcp_server(
     ) -> InvoiceDetail:
         return await invoices.get(get_request_api_key(), invoice_id, offset=offset, limit=limit)
 
-    return server
+    return register_project_agenda_tools(server, client, _current_identity)

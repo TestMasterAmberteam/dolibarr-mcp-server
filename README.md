@@ -5,8 +5,8 @@
 [![CodeQL](https://github.com/TestMasterAmberteam/dolibarr-mcp-server/actions/workflows/codeql.yml/badge.svg)](https://github.com/TestMasterAmberteam/dolibarr-mcp-server/actions/workflows/codeql.yml)
 
 A remote, stateless [Model Context Protocol](https://modelcontextprotocol.io/) server that
-authenticates each caller with that caller's own Dolibarr API key. It exposes 36 allowlisted tools
-for identity, time reporting, sales records, customer invoices, and leave requests while preserving
+authenticates each caller with that caller's own Dolibarr API key. It exposes 42 allowlisted tools
+for identity, projects, agenda history, time reporting, sales records, invoices, and leave while preserving
 Dolibarr's per-user permissions.
 
 This is an independent community project. It is not affiliated with, endorsed by, or maintained
@@ -26,10 +26,12 @@ by the Dolibarr project or its maintainers.
 - typed time-entry detail and aggregation by day, user, project, task, month, and ISO week;
 - preview-confirmed daily time registration for the caller's own task, date, hours, and comment;
 - API-only third-party and project-lead search with allowlisted typed projections;
+- ordinary-project search/details and manual/automatic agenda history, with confirmed creation
+  and single-event deletion;
 - read-only customer-invoice search, header details, and paged invoice lines;
 - typed leave-type lookup and leave-request search, detail, create, update, submit, approve,
   refuse, cancel, and reopen operations through official fixed API paths;
-- two-step preview-token confirmation for every create, update, and lifecycle transition;
+- two-step preview-token confirmation for every create, update, delete, and lifecycle transition;
 - explicit timeouts, connection limits, TLS verification, Host and Origin allowlists;
 - unauthenticated `/health/live` and `/health/ready` probes;
 - structured logs with correlation IDs and central credential redaction;
@@ -44,9 +46,9 @@ flowchart LR
     H --> B[Strict Bearer middleware]
     B -->|DOLAPIKEY: user key| D[Dolibarr /users/info]
     D -->|validated safe profile| X[request-scoped auth and credential contexts]
-    X --> M[MCPServer: 36 allowlisted tools]
+    X --> M[MCPServer: 42 allowlisted tools]
     M -->|DOLAPIKEY: same user key| R[Fixed Dolibarr REST operations]
-    R -->|allowlisted reporting, sales, invoice, and leave data| M
+    R -->|allowlisted project, history, reporting, sales, invoice, and leave data| M
     M --> P[Stateless mutation preview and stale-state token]
 ```
 
@@ -68,7 +70,7 @@ are listed in [`docs/adr`](docs/adr/).
 - Python 3.12 or newer;
 - [uv](https://docs.astral.sh/uv/);
 - Dolibarr 23.0 or newer with its REST API, Projects module, and
-  Leave/Holiday module enabled; enable the Invoices module for invoice tools;
+  Leave/Holiday module enabled; enable the Invoices module for invoice tools and Agenda for history;
 - one Dolibarr API key per MCP user;
 - HTTPS and a rate-limiting reverse proxy for production.
 
@@ -266,6 +268,15 @@ them to 4000 characters, and create/update inputs retain their 4000-character li
 | `dolibarr_lead_search` | optional query, third party, stage, state, owner | Only projects with `usage_opportunity=1` |
 | `dolibarr_lead_stage_list` | optional stage-code or ID `query` | Operator-configured plus observed stage ID/code pairs, explicitly incomplete |
 | `dolibarr_lead_get` | `project_id` | Lead data, sales stage, project state, and `PROJECTLEADER` owners |
+| `dolibarr_project_search` | optional `query`, `thirdparty_id`, `project_state`, `usage_opportunity`, `offset`, `limit` | All readable ordinary projects and opportunities, including closed/draft projects |
+| `dolibarr_project_get` | `project_id` | Safe project details, opportunity flag, dates, and bounded notes |
+| `dolibarr_agenda_event_search` | optional project, customer, local dates/timezone, owner, type code, completion status, paging | Manual and automatic project history in ascending event-ID order |
+| `dolibarr_agenda_event_get` | `event_id`, optional `timezone` | Safe details of one accessible history event |
+
+Project notes are fields on a project. Agenda events are separate history records; creating an
+E-mail event records a communication and does not send a message or invitation. See
+[project and agenda tools](docs/project-agenda.md) for all arguments, timezone semantics,
+preview/confirmation examples, deletion, permission checks, and uncertain-outcome recovery.
 
 Leave reads also use fixed official endpoints and local filtering. Results include only typed
 request fields; Dolibarr decides which employees and requests the caller may access.
@@ -285,6 +296,8 @@ token to write. The server re-reads the current API state and rejects a missing 
 | `dolibarr_thirdparty_create` | Create a third party with an explicit customer classification |
 | `dolibarr_thirdparty_update` | Update only allowlisted company fields |
 | `dolibarr_project_create` | Create a draft non-opportunity project, with an optional existing third party |
+| `dolibarr_agenda_event_create` | Record a manual own event linked to a readable project; human dates/timezone and `status=done` for 100 percent |
+| `dolibarr_agenda_event_delete` | Preview and delete exactly one event after checking its current snapshot; never bulk delete |
 | `dolibarr_time_entry_create` | Record own daily task time with a date, hours, and comment |
 | `dolibarr_task_create` | Add a task or subtask to an existing draft or open project, with confirmed preview |
 | `dolibarr_task_assign` | Add an active user to a task as contributor or executive, preserving existing assignments |
@@ -425,7 +438,7 @@ See [development.md](docs/development.md) for the clean-wheel, workflow, and con
 
 ## MVP limitations
 
-- no resources or prompts, and no delete tools;
+- no resources or prompts; deletion is limited to one preview-confirmed agenda event;
 - no OAuth discovery or token exchange;
 - clients must support a custom Bearer header;
 - one configured Dolibarr host per server deployment;

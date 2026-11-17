@@ -62,9 +62,19 @@ TOOL_NAMES = [
     "dolibarr_leave_request_reopen",
     "dolibarr_invoice_search",
     "dolibarr_invoice_get",
+    "dolibarr_project_search",
+    "dolibarr_project_get",
+    "dolibarr_agenda_event_search",
+    "dolibarr_agenda_event_get",
+    "dolibarr_agenda_event_create",
+    "dolibarr_agenda_event_delete",
 ]
 
 READ_ONLY_TOOL_NAMES = {
+    "dolibarr_project_search",
+    "dolibarr_project_get",
+    "dolibarr_agenda_event_search",
+    "dolibarr_agenda_event_get",
     "dolibarr_invoice_search",
     "dolibarr_invoice_get",
     *TOOL_NAMES[:8],
@@ -77,6 +87,7 @@ READ_ONLY_TOOL_NAMES = {
     "dolibarr_leave_request_get",
 }
 CREATE_TOOL_NAMES = {
+    "dolibarr_agenda_event_create",
     "dolibarr_thirdparty_create",
     "dolibarr_project_create",
     "dolibarr_time_entry_create",
